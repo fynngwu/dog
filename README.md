@@ -373,6 +373,159 @@ export UV_DEFAULT_INDEX="https://pypi.tuna.tsinghua.edu.cn/simple"
 | 华为云 | https://mirrors.huaweicloud.com/repository/pypi/simple |
 | 腾讯云 | https://mirrors.cloud.tencent.com/pypi/simple |
 
+## 在另一台电脑上测试
+
+### 1. 克隆仓库
+
+```bash
+git clone <your-repo-url>
+cd dog
+```
+
+### 2. 安装 uv 并配置环境
+
+```bash
+# 安装 uv
+curl -LsSf https://astral.org.cn/uv/install.sh | sh
+source ~/.bashrc
+
+# 创建虚拟环境并安装依赖
+uv venv --system-site-packages
+source .venv/bin/activate
+uv sync
+```
+
+### 3. 运行仿真测试
+
+#### 方式一：手柄控制（需要游戏手柄）
+
+```bash
+# 激活环境
+source .venv/bin/activate
+
+# 运行仿真
+python simulation/s2s_trot_joystick.py --load_model policy.onnx
+```
+
+#### 方式二：ROS2 控制（需要 ROS2 环境）
+
+```bash
+# 先 source ROS2 环境
+source /opt/ros/humble/setup.bash
+
+# 激活项目环境
+source .venv/bin/activate
+
+# 运行仿真
+python simulation/s2s_trot_joystick.py --load_model policy.onnx --ros2
+
+# 在另一个终端发布速度命令
+ros2 topic pub /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.5}, angular: {z: 0.0}}"
+```
+
+#### 方式三：自动化测试（无需手柄/ROS2）
+
+```bash
+source .venv/bin/activate
+python simulation/auto_test.py
+```
+
+自动化测试会执行以下序列：
+- 静止 1s → 前进 2s → 后退 2s → 左移 1s → 右移 1s → 左转 1s → 右转 1s → 静止 1s
+
+测试完成后会生成：
+- `simulation/auto_test_data.npz` - 数据文件
+- `simulation/auto_test_plot.png` - 图表
+
+### 4. 查看测试数据
+
+```bash
+source .venv/bin/activate
+
+# 打印数据摘要
+python simulation/view_test_data.py --no_plot
+
+# 显示图表
+python simulation/view_test_data.py
+```
+
+### 5. 数据收集与对比
+
+```bash
+# 收集仿真数据（手柄控制）
+python simulation/data_recorder.py --load_model policy.onnx --max_samples 5000 --output sim_data.npz
+
+# 收集仿真数据（ROS2 控制）
+python simulation/data_recorder.py --load_model policy.onnx --ros2 --output sim_data.npz
+
+# 查看仿真数据
+python simulation/analyze_data.py --sim_data sim_data.npz --plot_sim
+
+# 对比仿真与部署数据
+python simulation/analyze_data.py --sim_data sim_data.npz --deploy_data /path/to/deploy_log.bin
+```
+
+---
+
+## 策略使用说明
+
+### 网络输入 (45维 × 10帧 = 450维)
+
+| 分量 | 维度 | 说明 |
+|------|------|------|
+| angular_vel | 3 | 基座角速度 (body frame) |
+| projected_gravity | 3 | 重力在基座坐标系投影 |
+| commands | 3 | 速度命令 (vx, vy, yaw_rate) |
+| joint_pos | 12 | 关节位置相对默认位置偏移 |
+| joint_vel | 12 | 关节速度 |
+| last_action | 12 | 上一帧策略输出动作 |
+
+### 网络输出 (12维)
+
+| 分量 | 维度 | 说明 |
+|------|------|------|
+| action | 12 | 关节位置偏移量 |
+
+### 目标位置计算
+
+```python
+target_q = action * action_scale + default_dof_pos
+# action_scale = 0.25
+```
+
+### 关节顺序 (Policy 顺序)
+
+```
+[LF_HipA, LR_HipA, RF_HipA, RR_HipA,  # HipA: 0-3
+ LF_HipF, LR_HipF, RF_HipF, RR_HipF,  # HipF: 4-7
+ LF_Knee, LR_Knee, RF_Knee, RR_Knee]  # Knee: 8-11
+```
+
+### 控制参数
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| dt | 0.005s | 仿真时间步长 |
+| decimation | 4 | 控制频率降频 (50Hz 控制) |
+| kp | 25.0 | PD 控制比例增益 |
+| kd | 0.5 | PD 控制微分增益 |
+| action_scale | 0.25 | 动作缩放因子 |
+
+---
+
+## 调试指南
+
+详见 [simulation/DEBUG_GUIDE.md](simulation/DEBUG_GUIDE.md)
+
+### 关键检查点
+
+1. **关节顺序映射** - Policy 顺序与 MuJoCo 顺序不同，需要正确映射
+2. **膝关节减速比** - 观测中除以减速比，输出中乘以减速比
+3. **IMU 坐标系** - 确认 IMU 安装方向和坐标系转换
+4. **action_scale** - 确保仿真与部署一致 (0.25)
+
+---
+
 ## License
 
 SPDX-License-Identifier: BSD-3-Clause

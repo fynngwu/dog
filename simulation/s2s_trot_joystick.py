@@ -10,6 +10,7 @@ import onnxruntime as ort
 import argparse
 
 from joystick_interface import JoystickInterface
+from ros2_interface import ROS2Interface, ROS2_AVAILABLE
 
 # ---------------------------------------------------------------------------- #
 #                               Remapping Indices                              #
@@ -151,12 +152,16 @@ def pd_control(target_q, q, kp, target_dq, dq, kd, default_pos):
 # ---------------------------------------------------------------------------- #
 
 
-def run_mujoco(onnx_session, cfg):
-    # 初始化键盘监听
-    # cmd = Command()
-    # listener = keyboard.Listener(on_press=cmd.on_press)
-    # listener.start()
-    joy = JoystickInterface(device_path="/dev/input/js0", max_v_x=2.0, max_v_y=1.0, max_omega=1.5)
+def run_mujoco(onnx_session, cfg, use_ros2=False):
+    # 初始化控制接口
+    if use_ros2:
+        if not ROS2_AVAILABLE:
+            print("[Error] ROS2 not available. Please install rclpy and geometry_msgs.")
+            return
+        controller = ROS2Interface(max_v_x=2.0, max_v_y=1.0, max_omega=1.5)
+        print("[Info] Using ROS2 cmd_vel control")
+    else:
+        controller = JoystickInterface(device_path="/dev/input/js0", max_v_x=2.0, max_v_y=1.0, max_omega=1.5)
 
     # 加载模型
     model = mujoco.MjModel.from_xml_path(cfg.sim_config.mujoco_model_path)
@@ -240,7 +245,7 @@ def run_mujoco(onnx_session, cfg):
                     get_gravity_orientation(quat) * scales.projected_gravity
                 )
 
-                cmd_x, cmd_y, cmd_yaw = joy.get_command()
+                cmd_x, cmd_y, cmd_yaw = controller.get_command()
                 current_cmd = np.array([cmd_x, cmd_y, cmd_yaw], dtype=np.double)
 
                 obs_list.append(current_cmd * scales.commands)
@@ -317,13 +322,16 @@ def run_mujoco(onnx_session, cfg):
 
             count_lowlevel += 1
 
-    joy.stop()
+    controller.stop()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--load_model", type=str, required=True, help="Path to ONNX model"
+    )
+    parser.add_argument(
+        "--ros2", action="store_true", help="Use ROS2 cmd_vel control instead of joystick"
     )
     args = parser.parse_args()
 
@@ -334,4 +342,4 @@ if __name__ == "__main__":
         print(f"Error loading ONNX model: {e}")
         exit()
 
-    run_mujoco(ort_session, Sim2simCfg())
+    run_mujoco(ort_session, Sim2simCfg(), use_ros2=args.ros2)
