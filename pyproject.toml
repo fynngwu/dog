@@ -1,0 +1,30 @@
+[project]
+name = "dog-simulation"
+version = "0.1.0"
+description = "四足机器人仿真与部署项目"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "mujoco>=3.0.0",
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "onnxruntime>=1.16.0,<1.20.0",
+    "matplotlib>=3.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+]
+
+[tool.uv]
+# 使用阿里云 PyPI 镜像源
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple"
+default = true
+
+# Python 解释器下载镜像 (国内加速)
+python-install-mirror = "https://cnb.cool/astral-sh/python-build-standalone/-/releases/download/"
+
+[tool.hatch.build.targets.wheel]
+packages = ["simulation"]

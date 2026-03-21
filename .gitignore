@@ -1,0 +1,75 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# MuJoCo
+MUJOCO_LOG.TXT
+*.mjb
+
+# Data files (in simulation folder)
+simulation/*.npz
+simulation/*.npy
+simulation/*.png
+simulation/collected_data.npz
+simulation/data_plot.png
+simulation/action_plot.png
+simulation/obs_plot.png
+
+# Generated XML
+leggedrobot_flat_fixed.xml
+
+# Archives
+*.tar.gz
+*.zip
+*.gz:Zone.Identifier
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+*.txt
+!requirements.txt
+
+# Debug/utils
+debug_utils/
+stubs/
+
+# Compiled object files
+*.o
+*.obj
+
+# MuJoCo source
+mujoco-3.6.0/
