@@ -261,8 +261,8 @@ int main(int argc, char** argv) {
             infer_ms = std::chrono::duration<double, std::milli>(infer_t1 - infer_t0).count();
             infer_success = true;
 
-            // 更新 action (用于下一帧的 prev_action)
-            action_component->SetAction(policy_out.raw_action);
+            // 暂时禁用 prev_action 回灌，避免正反馈导致发散
+            // action_component->SetAction(policy_out.raw_action);
         } catch (const std::exception& e) {
             std::cerr << "\n[Policy] ERROR: Inference failed: " << e.what() << std::endl;
             logger.LogEvent(std::string("ERROR: Inference failed: ") + e.what());
