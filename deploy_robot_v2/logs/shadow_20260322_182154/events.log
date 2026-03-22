@@ -1,0 +1,13 @@
+[18:21:54] Shadow mode started
+[18:21:54] Binding CAN interfaces
+[18:21:54] Binding motors
+[18:21:54] Enabling motors
+[18:21:54] Enabling auto report
+[18:21:54] Waiting for feedback
+[18:21:54] Moving to offset pose
+[18:21:59] Input source: keyboard
+[18:21:59] Loading policy engine
+[18:21:59] Prewarming history with valid frames
+[18:22:00] History prewarm complete with valid frames
+[18:22:00] Starting shadow loop
+[18:22:11] Shadow loop ended
