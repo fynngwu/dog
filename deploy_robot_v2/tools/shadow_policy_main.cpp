@@ -23,6 +23,7 @@
 
 #include <iostream>
 #include <iomanip>
+#include <sstream>
 #include <memory>
 #include <thread>
 #include <chrono>
@@ -70,9 +71,13 @@ int main(int argc, char** argv) {
     std::cout << "Input: " << input_mode << std::endl;
     std::cout << std::endl;
 
-    // 创建日志目录
-    std::string log_dir = cfg::kLogDir + "/shadow_" + std::to_string(
-        std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()));
+    // 创建日志目录：shadow_{YYYYMMDD_HHMMSS}
+    auto now = std::chrono::system_clock::now();
+    auto now_time_t = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+    ss << cfg::kLogDir << "/shadow_"
+       << std::put_time(std::localtime(&now_time_t), "%Y%m%d_%H%M%S");
+    std::string log_dir = ss.str();
 
     SessionLogger logger;
     if (logger.Open(log_dir)) {

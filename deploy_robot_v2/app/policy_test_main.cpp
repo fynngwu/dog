@@ -26,6 +26,7 @@
 
 #include <iostream>
 #include <iomanip>
+#include <sstream>
 #include <memory>
 #include <thread>
 #include <chrono>
@@ -132,18 +133,22 @@ int main(int argc, char** argv) {
     std::cout << "Input: " << input_mode << std::endl;
     std::cout << std::endl;
 
-    // 创建日志
-    std::string log_dir = cfg::kLogDir + "/session_" + std::to_string(
-        std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()));
+    // 创建日志目录：{mode}_{YYYYMMDD_HHMMSS}
+    std::string mode_str;
+    switch (mode) {
+        case RunMode::HoldOnly: mode_str = "hold"; break;
+        case RunMode::ShadowPolicy: mode_str = "shadow"; break;
+        case RunMode::ClosedLoop: mode_str = "closedloop"; break;
+    }
+    auto now = std::chrono::system_clock::now();
+    auto now_time_t = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+    ss << cfg::kLogDir << "/" << mode_str << "_"
+       << std::put_time(std::localtime(&now_time_t), "%Y%m%d_%H%M%S");
+    std::string log_dir = ss.str();
 
     SessionLogger logger;
     if (logger.Open(log_dir)) {
-        std::string mode_str;
-        switch (mode) {
-            case RunMode::HoldOnly: mode_str = "hold_only"; break;
-            case RunMode::ShadowPolicy: mode_str = "shadow"; break;
-            case RunMode::ClosedLoop: mode_str = "closed_loop"; break;
-        }
         logger.LogMeta("{\"mode\": \"" + mode_str + "\", \"input\": \"" + input_mode +
                        "\", \"policy_input_dim\": 450, \"history_len\": 10, \"control_hz\": 50}");
     }
