@@ -20,15 +20,15 @@ endif()
 # TensorRT
 # ============================================================================
 find_path(TENSORRT_INCLUDE_DIR NvInfer.h
-    PATHS /usr/include/x86_64-linux-gnu
+    PATHS /usr/include/x86_64-linux-gnu /usr/include/aarch64-linux-gnu
     NO_DEFAULT_PATH
 )
 find_library(NVINFER_LIB nvinfer
-    PATHS /usr/lib/x86_64-linux-gnu
+    PATHS /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu
     NO_DEFAULT_PATH
 )
 find_library(NVONNXPARSER_LIB nvonnxparser
-    PATHS /usr/lib/x86_64-linux-gnu
+    PATHS /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu
     NO_DEFAULT_PATH
 )
 

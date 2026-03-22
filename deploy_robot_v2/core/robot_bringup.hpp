@@ -48,9 +48,10 @@ public:
      * @brief 使能所有电机
      * @param motor_indices 电机索引数组
      * @param low_gain 是否使用低增益模式（地面测试用）
+     * @param retry_count 每个电机的使能重试次数（默认 3 次）
      * @return true 成功, false 失败
      */
-    bool EnableAll(const std::vector<int>& motor_indices, bool low_gain = false);
+    bool EnableAll(const std::vector<int>& motor_indices, bool low_gain = false, int retry_count = 3);
 
     /**
      * @brief 开启所有电机的自动上报

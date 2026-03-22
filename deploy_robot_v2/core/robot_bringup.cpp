@@ -53,12 +53,39 @@ bool RobotBringup::BindAllMotors(std::vector<int>& motor_indices) {
     return true;
 }
 
-bool RobotBringup::EnableAll(const std::vector<int>& motor_indices, bool low_gain) {
+bool RobotBringup::EnableAll(const std::vector<int>& motor_indices, bool low_gain, int retry_count) {
+    const int kWaitMs = 50;  // 每次使能后等待反馈的时间
+
     for (int idx : motor_indices) {
-        if (controller_->EnableMotor(idx) != 0) {
-            std::cerr << "[RobotBringup] Failed to enable motor index " << idx << std::endl;
+        bool enabled = false;
+        for (int attempt = 1; attempt <= retry_count; ++attempt) {
+            // 发送使能命令
+            if (controller_->EnableMotor(idx) != 0) {
+                std::cerr << "[RobotBringup] Enable motor index " << idx
+                          << " send failed (attempt " << attempt << "/" << retry_count << ")" << std::endl;
+                if (attempt < retry_count) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+                continue;
+            }
+
+            // 等待电机反馈确认
+            std::this_thread::sleep_for(std::chrono::milliseconds(kWaitMs));
+            if (controller_->IsMotorOnline(idx)) {
+                enabled = true;
+                break;
+            }
+
+            std::cerr << "[RobotBringup] Enable motor index " << idx
+                      << " no feedback (attempt " << attempt << "/" << retry_count << ")" << std::endl;
+        }
+
+        if (!enabled) {
+            std::cerr << "[RobotBringup] Failed to enable motor index " << idx
+                      << " after " << retry_count << " attempts" << std::endl;
             return false;
         }
+
         if (low_gain) {
             // 低增益模式：用于地面排查
             controller_->SetMITParams(idx, {10.0f, 0.3f, cfg::kMitVelLimit, cfg::kMitTorqueLimit});
