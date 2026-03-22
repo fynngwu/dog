@@ -83,4 +83,13 @@ static const std::string kPolicyEnginePath = "/home/ares/pure_cpp/policy.engine"
 // ============================================================================
 static const std::string kLogDir = "/home/wufy/git_resp/dog/logs";
 
+// ============================================================================
+// ROS2 输入配置
+// ============================================================================
+inline constexpr const char* kRos2CmdTopic = "/cmd_vel";
+inline constexpr float kRos2CmdVxScale = 0.5f;
+inline constexpr float kRos2CmdVyScale = 0.5f;
+inline constexpr float kRos2CmdYawScale = 0.5f;
+inline constexpr int   kRos2CmdDeadmanMs = 200;
+
 }  // namespace cfg

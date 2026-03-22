@@ -72,7 +72,7 @@ void PrintUsage(const char* prog) {
     std::cout << "    run      - Observe + inference + logging + control (closed-loop)" << std::endl;
     std::cout << std::endl;
     std::cout << "  options:" << std::endl;
-    std::cout << "    --input <source>  - Input source: gamepad, keyboard, auto (default: auto)" << std::endl;
+    std::cout << "    --input <source>  - Input source: gamepad, keyboard, ros2, auto (default: auto)" << std::endl;
     std::cout << "    --low-gain        - Use low gain mode for ground testing" << std::endl;
     std::cout << std::endl;
     std::cout << "  keyboard controls:" << std::endl;
@@ -103,7 +103,8 @@ int main(int argc, char** argv) {
             return 0;
         } else if (arg == "--input" && i + 1 < argc) {
             input_mode = argv[++i];
-            if (input_mode != "gamepad" && input_mode != "keyboard" && input_mode != "auto") {
+            if (input_mode != "gamepad" && input_mode != "keyboard" &&
+                input_mode != "ros2" && input_mode != "auto") {
                 std::cerr << "Unknown input mode: " << input_mode << std::endl;
                 PrintUsage(argv[0]);
                 return 1;
@@ -469,13 +470,16 @@ int main(int argc, char** argv) {
         // 打印状态 (每 10 帧)
         if (tick % 10 == 0) {
             auto cmd = input_source->GetCommand();
+            auto imu_obs = imu_component->GetObs();  // [gyro_x, gyro_y, gyro_z, grav_x, grav_y, grav_z]
+
             std::cout << "\r[t=" << std::fixed << std::setprecision(1) << rec.t_sec
                       << "s] dt: " << std::setprecision(1) << rec.loop_dt_ms << "ms"
                       << " | infer: " << infer_ms << "ms"
                       << " | ctrl: " << (control_enabled ? "ON" : "HOLD")
                       << " | cmd: [" << std::setprecision(2) << cmd[0] << "," << cmd[1] << "," << cmd[2] << "]"
+                      << " | gyro: [" << imu_obs[0] << "," << imu_obs[1] << "," << imu_obs[2] << "]"
+                      << " | grav: [" << imu_obs[3] << "," << imu_obs[4] << "," << imu_obs[5] << "]"
                       << " | max_err: " << std::setprecision(3) << max_track_err
-                      << " | clamp: " << clamp_count
                       << " | imu: " << (rec.imu_fresh ? "OK" : "!!")
                       << " | motors: " << (rec.motors_fresh ? "OK" : "!!")
                       << std::flush;
