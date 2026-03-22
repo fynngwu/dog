@@ -81,7 +81,7 @@ static const std::string kPolicyEnginePath = "/home/ares/pure_cpp/policy.engine"
 // ============================================================================
 // 日志配置
 // ============================================================================
-static const std::string kLogDir = "/home/wufy/git_resp/dog/logs";
+static const std::string kLogDir = "/home/ares/pure_cpp/dog/deploy_robot_v2/logs";
 
 // ============================================================================
 // ROS2 输入配置
