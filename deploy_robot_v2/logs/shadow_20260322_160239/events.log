@@ -1,0 +1,14 @@
+[16:02:39] Creating controller
+[16:02:39] Binding CAN interfaces
+[16:02:39] Binding motors
+[16:02:39] Enabling motors
+[16:02:40] Enabling auto report
+[16:02:40] Waiting for feedback
+[16:02:40] Moving to offset pose
+[16:02:42] Creating observation components
+[16:02:45] Input source: keyboard
+[16:02:45] Loading policy engine
+[16:02:45] Prewarming history with valid frames
+[16:02:45] History prewarm complete with valid frames
+[16:02:45] Starting main loop
+[16:02:58] Main loop ended
