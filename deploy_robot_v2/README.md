@@ -393,6 +393,69 @@ const float kMaxTrackErr = 0.6f;        // 最大跟踪误差 0.6 rad
 3. 分析日志中 `cmd_sent` vs `motor_pos`
 4. 对比 shadow 和 run 的 `raw_action` 是否一致
 
+## 日志分析工具
+
+`tools/analyze_log.py` 提供日志可视化和统计分析功能。
+
+### 安装依赖
+
+```bash
+cd /home/wufy/git_resp/dog/deploy_robot_v2
+uv add numpy pandas matplotlib
+```
+
+### 使用方法
+
+```bash
+# 查看摘要统计
+uv run python tools/analyze_log.py logs/session_xxx
+
+# 绘制时间线（推理耗时、跟踪误差、传感器状态）
+uv run python tools/analyze_log.py logs/session_xxx --plot timeline
+
+# 绘制所有关节的 action
+uv run python tools/analyze_log.py logs/session_xxx --plot action
+
+# 绘制单个关节详情（位置、速度、力矩）
+uv run python tools/analyze_log.py logs/session_xxx --plot joint --joint 0
+
+# 绘制跟踪误差热图
+uv run python tools/analyze_log.py logs/session_xxx --plot tracking
+
+# 绘制观测数据（IMU、command、joint）
+uv run python tools/analyze_log.py logs/session_xxx --plot obs
+
+# 绘制所有图表
+uv run python tools/analyze_log.py logs/session_xxx --plot all
+
+# 检查 clamp 情况
+uv run python tools/analyze_log.py logs/session_xxx --stat clamp
+
+# 保存图片到日志目录
+uv run python tools/analyze_log.py logs/session_xxx --plot timeline --save
+```
+
+### 命令行参数
+
+| 参数 | 说明 |
+|------|------|
+| `log_dir` | 日志目录路径 |
+| `--plot` | 绘图类型：timeline, action, joint, tracking, obs, all |
+| `--joint` | 关节索引 (0-11)，用于 `--plot joint` |
+| `--stat` | 统计类型：summary, clamp, all |
+| `--save` | 保存图片到日志目录 |
+
+### 关节索引
+
+| 索引 | 关节 | 索引 | 关节 |
+|------|------|------|------|
+| 0 | LF_HipA | 6 | RF_HipA |
+| 1 | LF_HipF | 7 | RF_HipF |
+| 2 | LF_Knee | 8 | RF_Knee |
+| 3 | LR_HipA | 9 | RR_HipA |
+| 4 | LR_HipF | 10 | RR_HipF |
+| 5 | LR_Knee | 11 | RR_Knee |
+
 ## CAN ID 协议
 
 Robstride 电机 CAN ID 布局：
