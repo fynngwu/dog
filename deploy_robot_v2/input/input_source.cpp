@@ -15,7 +15,7 @@ std::shared_ptr<ICommandSource> CreateInputSource(const std::string& input_mode)
         return std::make_shared<GamepadCommandSource>(gamepad);
 
     } else if (input_mode == "keyboard") {
-        return std::make_shared<KeyboardCommandSource>(0.5f, 0.0f, 0.5f);
+        return std::make_shared<KeyboardCommandSource>(0.1f, 0.0f, 0.1f);
 
     } else if (input_mode == "ros2") {
 #ifdef ROS2_FOUND
@@ -28,7 +28,7 @@ std::shared_ptr<ICommandSource> CreateInputSource(const std::string& input_mode)
 #else
         std::cerr << "[Input] ERROR: ROS2 input not available (compiled without ROS2 support)" << std::endl;
         std::cerr << "[Input] Falling back to keyboard" << std::endl;
-        return std::make_shared<KeyboardCommandSource>(0.5f, 0.0f, 0.5f);
+        return std::make_shared<KeyboardCommandSource>(0.1f, 0.0f, 0.1f);
 #endif
 
     } else {  // auto
@@ -38,7 +38,7 @@ std::shared_ptr<ICommandSource> CreateInputSource(const std::string& input_mode)
             return std::make_shared<GamepadCommandSource>(gamepad);
         } else {
             std::cout << "[Input] No gamepad, using keyboard" << std::endl;
-            return std::make_shared<KeyboardCommandSource>(0.5f, 0.0f, 0.5f);
+            return std::make_shared<KeyboardCommandSource>(0.1f, 0.0f, 0.1f);
         }
     }
 }
