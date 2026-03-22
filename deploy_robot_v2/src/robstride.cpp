@@ -229,6 +229,28 @@ struct motor_state RobstrideController::GetMotorState(int motor_idx) {
     return {0, 0, 0};
 }
 
+void RobstrideController::GetAllMotorStates(const std::vector<int>& motor_indices,
+                                           std::vector<float>& positions,
+                                           std::vector<float>& velocities,
+                                           std::vector<float>& torques) {
+    std::lock_guard<std::recursive_mutex> lock(motor_data_mutex);
+    positions.resize(motor_indices.size());
+    velocities.resize(motor_indices.size());
+    torques.resize(motor_indices.size());
+    for (size_t i = 0; i < motor_indices.size(); ++i) {
+        int idx = motor_indices[i];
+        if (idx >= 0 && (size_t)idx < motor_data.size()) {
+            positions[i] = motor_data[idx].state.position;
+            velocities[i] = motor_data[idx].state.velocity;
+            torques[i] = motor_data[idx].state.torque;
+        } else {
+            positions[i] = 0;
+            velocities[i] = 0;
+            torques[i] = 0;
+        }
+    }
+}
+
 bool RobstrideController::IsMotorOnline(int motor_idx) {
     std::lock_guard<std::recursive_mutex> lock(motor_data_mutex);
     if (motor_idx >= 0 && (size_t)motor_idx < motor_data.size()) {

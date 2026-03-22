@@ -5,6 +5,10 @@
 #include <functional>
 #include "robstride.hpp"
 #include "can_interface.hpp"
+#include "observations.hpp"
+
+// 前向声明
+class ICommandSource;
 
 /**
  * @brief 机器人启动管理器
@@ -43,9 +47,10 @@ public:
     /**
      * @brief 使能所有电机
      * @param motor_indices 电机索引数组
+     * @param low_gain 是否使用低增益模式（地面测试用）
      * @return true 成功, false 失败
      */
-    bool EnableAll(const std::vector<int>& motor_indices);
+    bool EnableAll(const std::vector<int>& motor_indices, bool low_gain = false);
 
     /**
      * @brief 开启所有电机的自动上报
@@ -100,8 +105,19 @@ public:
     /**
      * @brief 保持电机在 offset 位置
      * @param motor_indices 电机索引数组
+     * @return true 所有发送成功, false 有任何失败
      */
-    void HoldOffsets(const std::vector<int>& motor_indices);
+    bool HoldOffsets(const std::vector<int>& motor_indices);
+
+    /**
+     * @brief 紧急安全保持：重复发送 hold 命令确保所有电机回到安全位置
+     * @param motor_indices 电机索引数组
+     * @param repeat 重复次数（默认 3 次）
+     * @return true 所有发送成功, false 有任何失败
+     *
+     * 用于发送失败或异常时立即让所有电机进入安全状态
+     */
+    bool EmergencyHoldAll(const std::vector<int>& motor_indices, int repeat = 3);
 
     /**
      * @brief 获取控制器指针
@@ -112,3 +128,12 @@ private:
     std::shared_ptr<RobstrideController> controller_;
     std::vector<std::shared_ptr<CANInterface>> can_ifaces_;
 };
+
+/**
+ * @brief 检查所有传感器是否就绪
+ */
+bool CheckSensorsReady(const std::shared_ptr<IMUComponent>& imu,
+                       const std::shared_ptr<RobstrideController>& controller,
+                       const std::vector<int>& motor_indices,
+                       int motor_fresh_ms = 100,
+                       int imu_fresh_ms = 100);

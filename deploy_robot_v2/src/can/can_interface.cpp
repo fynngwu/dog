@@ -57,16 +57,18 @@ CANInterface::CANInterface(const char* can_if) : running(false), can_socket(-1),
                 continue;
             }
 
-            // Dispatch
+            // Dispatch: copy matched callbacks under lock, execute outside lock
+            std::vector<can_rx_callback_t> callbacks;
+            std::vector<void*> callback_data;
             {
                 std::lock_guard<std::mutex> lock(filter_mutex);
                 for (const auto& info : filter_info) {
                     bool match = true;
-                    
+
                     // 1. Check IDE (Extended Frame) matches filter flag
                     bool is_frame_extended = (frame.can_id & CAN_EFF_FLAG);
                     bool is_filter_extended = (info.filter.flags & CAN_FILTER_IDE);
-                    
+
                     // If mask is 0, we treat it as "match all", ignoring flags
                     if (info.filter.mask != 0 && (is_frame_extended != is_filter_extended)) {
                         match = false;
@@ -75,16 +77,22 @@ CANInterface::CANInterface(const char* can_if) : running(false), can_socket(-1),
                     // 2. Mask logic: (id & mask) == (filter_id & mask)
                     if (match) {
                         // Remove EFF/RTR/ERR flags for ID comparison
-                        uint32_t clean_id = frame.can_id & CAN_EFF_MASK; 
+                        uint32_t clean_id = frame.can_id & CAN_EFF_MASK;
                         if ((clean_id & info.filter.mask) != (info.filter.id & info.filter.mask)) {
                             match = false;
                         }
                     }
-                    
+
                     if (match && info.callback) {
-                        info.callback(nullptr, &frame, info.user_data);
+                        callbacks.push_back(info.callback);
+                        callback_data.push_back(info.user_data);
                     }
                 }
+            }
+            // Execute callbacks without holding lock
+            struct can_frame frame_copy = frame;
+            for (size_t i = 0; i < callbacks.size(); ++i) {
+                callbacks[i](nullptr, &frame_copy, callback_data[i]);
             }
         }
     });

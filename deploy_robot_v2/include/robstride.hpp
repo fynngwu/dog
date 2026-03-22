@@ -38,6 +38,10 @@ public:
     };
     int BindMotor(const char* can_if, std::unique_ptr<struct MotorInfo> motor_info);
     struct motor_state GetMotorState(int motor_idx);
+    void GetAllMotorStates(const std::vector<int>& motor_indices,
+                          std::vector<float>& positions,
+                          std::vector<float>& velocities,
+                          std::vector<float>& torques);
     bool IsMotorOnline(int motor_idx);  // 检查电机是否在线
     int64_t GetLastOnlineAgeMs(int motor_idx);  // 获取距离上次反馈的毫秒数
     bool AllMotorsOnlineFresh(const std::vector<int>& motor_indices, int max_age_ms = 100);  // 检查所有电机是否在线且新鲜

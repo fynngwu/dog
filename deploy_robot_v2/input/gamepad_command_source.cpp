@@ -13,7 +13,7 @@ GamepadCommandSource::GamepadCommandSource(std::shared_ptr<Gamepad> gamepad,
 
 std::vector<float> GamepadCommandSource::GetCommand() const {
     std::vector<float> cmd(3, 0.0f);
-    if (!gamepad_ || !gamepad_->IsConnected()) {
+    if (!gamepad_ || !gamepad_->IsFresh(500)) {
         return cmd;
     }
 
@@ -29,5 +29,5 @@ std::vector<float> GamepadCommandSource::GetCommand() const {
 }
 
 bool GamepadCommandSource::IsReady() const {
-    return gamepad_ && gamepad_->IsConnected();
+    return gamepad_ && gamepad_->IsFresh(500);
 }

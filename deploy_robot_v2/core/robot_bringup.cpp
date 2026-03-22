@@ -53,18 +53,25 @@ bool RobotBringup::BindAllMotors(std::vector<int>& motor_indices) {
     return true;
 }
 
-bool RobotBringup::EnableAll(const std::vector<int>& motor_indices) {
+bool RobotBringup::EnableAll(const std::vector<int>& motor_indices, bool low_gain) {
     for (int idx : motor_indices) {
         if (controller_->EnableMotor(idx) != 0) {
             std::cerr << "[RobotBringup] Failed to enable motor index " << idx << std::endl;
             return false;
         }
-        controller_->SetMITParams(idx, {
-            cfg::kMitKp, cfg::kMitKd, cfg::kMitVelLimit, cfg::kMitTorqueLimit
-        });
+        if (low_gain) {
+            // 低增益模式：用于地面排查
+            controller_->SetMITParams(idx, {10.0f, 0.3f, cfg::kMitVelLimit, cfg::kMitTorqueLimit});
+        } else {
+            // 正常增益模式
+            controller_->SetMITParams(idx, {
+                cfg::kMitKp, cfg::kMitKd, cfg::kMitVelLimit, cfg::kMitTorqueLimit
+            });
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
-    std::cout << "[RobotBringup] All motors enabled" << std::endl;
+    std::cout << "[RobotBringup] All motors enabled"
+              << (low_gain ? " (LOW-GAIN mode: kp=10, kd=0.3)" : "") << std::endl;
     return true;
 }
 
@@ -155,6 +162,7 @@ bool RobotBringup::SmoothMoveAbs(const std::vector<int>& motor_indices,
         // 检查电机是否在线
         if (!controller_->AllMotorsOnlineFresh(motor_indices, 200)) {
             std::cerr << "[RobotBringup] Smooth move interrupted: motor offline or stale feedback" << std::endl;
+            EmergencyHoldAll(motor_indices, 3);
             return false;
         }
 
@@ -167,6 +175,7 @@ bool RobotBringup::SmoothMoveAbs(const std::vector<int>& motor_indices,
             int ret = controller_->SendMITCommand(motor_indices[i], cmd);
             if (ret != 0) {
                 std::cerr << "[RobotBringup] Smooth move interrupted: send command failed for motor " << i << std::endl;
+                EmergencyHoldAll(motor_indices, 3);
                 return false;
             }
         }
@@ -193,8 +202,35 @@ bool RobotBringup::MoveCurrentToOffsets(const std::vector<int>& motor_indices,
     return SmoothMoveAbs(motor_indices, q0, cfg::kJointOffsets, duration_sec, 100, stop_condition);
 }
 
-void RobotBringup::HoldOffsets(const std::vector<int>& motor_indices) {
+bool RobotBringup::HoldOffsets(const std::vector<int>& motor_indices) {
+    bool ok = true;
     for (size_t i = 0; i < motor_indices.size(); ++i) {
-        controller_->SendMITCommand(motor_indices[i], cfg::kJointOffsets[i]);
+        if (controller_->SendMITCommand(motor_indices[i], cfg::kJointOffsets[i]) != 0) {
+            ok = false;
+        }
     }
+    return ok;
+}
+
+bool RobotBringup::EmergencyHoldAll(const std::vector<int>& motor_indices, int repeat) {
+    bool ok = true;
+    for (int r = 0; r < repeat; ++r) {
+        ok = HoldOffsets(motor_indices) && ok;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return ok;
+}
+
+bool CheckSensorsReady(const std::shared_ptr<IMUComponent>& imu,
+                       const std::shared_ptr<RobstrideController>& controller,
+                       const std::vector<int>& motor_indices,
+                       int motor_fresh_ms,
+                       int imu_fresh_ms) {
+    if (!imu->IsReady() || !imu->IsFresh(imu_fresh_ms)) {
+        return false;
+    }
+    if (!controller->AllMotorsOnlineFresh(motor_indices, motor_fresh_ms)) {
+        return false;
+    }
+    return true;
 }

@@ -93,7 +93,22 @@ cd /home/wufy/git_resp/dog/deploy_robot_v2/build
 ./policy_test_main run --input gamepad   # 手柄控制
 ./policy_test_main run --input keyboard  # 键盘控制
 ./policy_test_main run --input auto      # 自动选择（默认）
+
+# 低增益模式（地面测试推荐）
+./policy_test_main run --input keyboard --low-gain
+./policy_test_main shadow --input keyboard --low-gain
 ```
+
+**命令行参数：**
+- `hold / shadow / run`：运行模式
+- `--input <source>`：输入源（gamepad/keyboard/auto）
+- `--low-gain`：使用低增益模式（kp=10, kd=0.3）
+
+**闭环保护机制：**
+- 1 秒渐入（blend-in）
+- 每拍最大变化 0.03 rad
+- 跟踪误差 > 0.6 rad 时紧急 hold
+- 发送失败时紧急 hold
 
 **键盘控制说明：**
 - `W/S`: 前进/后退 (vx)
@@ -250,13 +265,133 @@ static const std::string kPolicyEnginePath = "/home/wufy/git_resp/dog/pure_cpp/p
 
 ## 测试流程
 
-推荐的测试顺序：
+### 标准测试顺序
 
-1. `inspect_feedback` - 验证通信链路
-2. `ramp_to_offset` - 验证安全上电
-3. `policy_test_main hold` - 验证观测和 hold
-4. `policy_test_main shadow` - 验证 policy 推理（不发控制）
-5. `policy_test_main run` - 闭环控制
+**重要：不要跳步直接上 run！必须按顺序逐步验证。**
+
+```bash
+# 第 1 步：查通信，不跑 policy
+./build/inspect_feedback
+
+# 第 2 步：平滑上电到 offset，只看 hold
+./build/ramp_to_offset
+
+# 第 3 步：跑 hold 模式，验证观测链不崩
+./build/policy_test_main hold --input keyboard --low-gain
+
+# 第 4 步：跑 shadow，不下发 policy
+./build/policy_test_main shadow --input keyboard --low-gain
+
+# 第 5 步：低增益 run（首次闭环）
+./build/policy_test_main run --input keyboard --low-gain
+
+# 第 6 步：正常增益 run（仅当前面都稳定）
+./build/policy_test_main run --input keyboard
+```
+
+**注意**：`zero_calibration` 只在安装/维护时使用，**不要放进正常 bringup 或闭环测试流程**。
+
+### 各步骤判定标准
+
+| 步骤 | 命令 | 判定标准 | 不通过时排查 |
+|------|------|----------|--------------|
+| 1 | `inspect_feedback` | 12 个电机都 online，位置/速度/力矩正常刷新 | CAN 接口、电机供电、电机 ID |
+| 2 | `ramp_to_offset` | 地上 offset hold 稳定，无抖动/漂移 | 零位、offset、kp/kd、机械装配 |
+| 3 | `hold --low-gain` | bringup、IMU、history 预热正常，无崩溃 | IMU 初始化、传感器连接 |
+| 4 | `shadow --low-gain` | `raw_action` 接近 0，无饱和，gravity 正常 | 观测定义、IMU 轴向、joint order |
+| 5 | `run --low-gain` | 首拍无跳变，跟踪误差小，机身稳定 | MIT 增益、执行层方向/比例 |
+| 6 | `run` | 正常增益下稳定运行 | 增益参数、接触刚度 |
+
+### 判定速查表
+
+| 测试结果 | 根因方向 | 优先排查 |
+|----------|----------|----------|
+| hold 不稳 | 硬件/执行层 | offset、零位、kp/kd |
+| hold 稳，shadow 不稳 | 观测定义 | IMU 轴向、joint order、膝关节比例 |
+| shadow 稳，run 不稳 | 执行层 | MIT 增益、软切入、命令限幅 |
+| 低增益稳，高增益不稳 | 增益问题 | 调整 kp/kd |
+
+### 参数说明
+
+#### 闭环保护参数（`policy_test_main.cpp`）
+
+```cpp
+const double kBlendInTime = 1.0;        // 渐入时间 1 秒
+const float kMaxStepPerTick = 0.03f;    // 每拍最大变化 0.03 rad
+const float kMaxTrackErr = 0.6f;        // 最大跟踪误差 0.6 rad
+```
+
+#### MIT 增益参数（`robot_bringup.cpp`）
+
+| 模式 | kp | kd | 用途 |
+|------|----|----|------|
+| 低增益 | 10.0 | 0.3 | 地面排查 |
+| 正常 | cfg::kMitKp | cfg::kMitKd | 正常运行 |
+
+#### 核心配置入口
+
+| 文件 | 内容 |
+|------|------|
+| `policy_test_main.cpp` | 运行模式、闭环保护参数 |
+| `robot_bringup.cpp` | bringup、MIT 参数、低增益设置 |
+| `policy_runner.cpp` | action scale、joint offsets、xml limit |
+| `observations.cpp` | IMU 轴映射、joint pos/vel、膝关节比例 |
+| `robot_config.hpp` | kJointOffsets、kMitKp/Kd、kActionScale 等 |
+
+### 日志字段说明
+
+`frames.csv` 包含以下字段：
+
+| 字段 | 维度 | 说明 |
+|------|------|------|
+| `single_obs` | 45 | policy 输入（IMU + command + joint + prev_action） |
+| `raw_action` | 12 | 网络原始输出 |
+| `desired_abs` | 12 | 目标绝对位置（加 offset 前） |
+| `clipped_abs` | 12 | 限幅后目标位置 |
+| `cmd_sent_abs` | 12 | 实际发送的命令 |
+| `cmd_minus_pos` | 12 | 命令与实际位置差 |
+| `cmd_delta` | 12 | 命令相对上一拍变化 |
+| `max_track_err` | 1 | 最大跟踪误差 |
+| `clamp_count` | 1 | clamp 次数 |
+| `imu_fresh` | 1 | IMU 是否新鲜 |
+| `motors_fresh` | 1 | 电机是否新鲜 |
+| `motor_pos_abs` | 12 | 电机实际位置 |
+| `motor_vel_abs` | 12 | 电机速度 |
+| `motor_torque` | 12 | 电机力矩 |
+
+### 空间说明
+
+- **电机空间**：`motor_pos_abs`、`cmd_sent_abs` 等是绝对位置
+- **关节观测空间**：`single_obs` 中的 joint pos/vel 已减去 offset，膝关节已除 1.667
+- **网络 action 空间**：`raw_action` 是网络输出，还未加 offset 和 scale
+
+### 常见问题排查
+
+#### Q: hold 时抖动
+- kp/kd 过高或过低
+- 零位不准
+- 机械问题
+
+#### Q: shadow 时 action 不为 0
+- IMU 零偏
+- gravity projection 不对
+- prev_action 初始化问题
+
+#### Q: run 时首拍跳变
+- blend-in 不够（增大 `kBlendInTime`）
+- offset 与 standing pose 不一致
+- `last_cmd` 初始化问题
+
+#### Q: 某关节一直 clamp
+- 该关节 offset 不对
+- joint limit 设置问题
+- 膝关节比例问题
+
+#### Q: 地面一接触就乱踢
+1. 先完成 hold → shadow → low-gain run 全流程
+2. 检查跟踪误差保护是否触发
+3. 分析日志中 `cmd_sent` vs `motor_pos`
+4. 对比 shadow 和 run 的 `raw_action` 是否一致
 
 ## CAN ID 协议
 

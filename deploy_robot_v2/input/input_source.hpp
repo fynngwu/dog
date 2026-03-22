@@ -1,5 +1,8 @@
 #pragma once
 #include <vector>
+#include <memory>
+#include <string>
+#include "observations.hpp"
 
 /**
  * @brief 命令输入源接口
@@ -38,3 +41,10 @@ public:
      */
     virtual const char* Name() const = 0;
 };
+
+/**
+ * @brief 创建输入源
+ * @param input_mode 输入模式: "gamepad", "keyboard", "auto"
+ * @return 输入源智能指针
+ */
+std::shared_ptr<ICommandSource> CreateInputSource(const std::string& input_mode);

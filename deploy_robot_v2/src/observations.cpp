@@ -67,7 +67,7 @@ IMUComponent::~IMUComponent() {
 void IMUComponent::UpdateLoop() {
     while (running_) {
         Update();
-        std::this_thread::sleep_for(std::chrono::microseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));  // 200Hz, 足够 50Hz 控制
     }
 }
 
@@ -127,6 +127,28 @@ bool IMUComponent::IsFresh(int timeout_ms) const {
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
         now - last_update_time_);
     return duration.count() <= timeout_ms;
+}
+
+void IMUComponent::PrintDebug() const {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    std::cout << "[IMU Debug] raw gyro (deg/s): [" 
+              << gyro[0] << ", " << gyro[1] << ", " << gyro[2] << "]"
+              << " | mapped (rad/s): ["
+              << gyro[1] * M_PI / 180.0f << ", "  // Y -> forward
+              << -gyro[0] * M_PI / 180.0f << ", " // -X -> left
+              << gyro[2] * M_PI / 180.0f << "]"   // Z -> up
+              << std::endl;
+    
+    float gx = 2 * (quaternion[1] * quaternion[3] - quaternion[0] * quaternion[2]);
+    float gy = 2 * (quaternion[2] * quaternion[3] + quaternion[0] * quaternion[1]);
+    float gz = 1 - 2 * (quaternion[1] * quaternion[1] + quaternion[2] * quaternion[2]);
+    float norm = std::sqrt(gx*gx + gy*gy + gz*gz);
+    if (norm > 1e-6f) { gx /= norm; gy /= norm; gz /= norm; }
+    
+    std::cout << "[IMU Debug] raw grav: [" << gx << ", " << gy << ", " << gz << "]"
+              << " | mapped: [" << -gy << ", " << gx << ", " << -gz << "]"
+              << " | valid: " << (data_valid_ ? "Y" : "N")
+              << std::endl;
 }
 
 void IMUComponent::AutoScanSensor() {
@@ -241,15 +263,40 @@ std::vector<float> JointComponent::GetObs() const {
     return obs;
 }
 
+void JointComponent::PrintDebug() const {
+    std::cout << "[Joint Debug] joint_count=" << joint_count << std::endl;
+    for (size_t i = 0; i < motor_indices.size() && i < 12; ++i) {
+        auto state = controller->GetMotorState(motor_indices[i]);
+        float pos_obs = state.position - offsets[i];
+        float vel_obs = state.velocity;
+        
+        // 膝关节特殊处理
+        if (i >= 8 && i <= 11) {
+            pos_obs /= 1.667f;
+            vel_obs /= 1.667f;
+            std::cout << "  [" << i << "] KNEE motor_pos=" << state.position 
+                      << " offset=" << offsets[i]
+                      << " obs_pos=" << pos_obs 
+                      << " (ratio=1.667)" << std::endl;
+        } else {
+            std::cout << "  [" << i << "] motor_pos=" << state.position 
+                      << " offset=" << offsets[i]
+                      << " obs_pos=" << pos_obs << std::endl;
+        }
+    }
+}
+
 // Implementations for ActionComponent, CommandComponent, RoboObsFrame, RoboObs
 
-Gamepad::Gamepad(const char* dev) : fd(-1), running(true) {
+Gamepad::Gamepad(const char* dev) : fd(-1), running(true), connected_(false) {
     fd = open(dev, O_RDONLY | O_NONBLOCK);
     if (fd < 0) {
         std::cerr << "Failed to open gamepad device: " << dev << std::endl;
         running = false;
         return;
     }
+    connected_ = true;
+    last_event_time_ = std::chrono::steady_clock::now();
     std::memset(axes, 0, sizeof(axes));
     read_thread = std::thread(&Gamepad::ReadLoop, this);
 }
@@ -271,26 +318,38 @@ float Gamepad::GetAxis(int axis) const {
 }
 
 bool Gamepad::IsConnected() const {
-    return fd >= 0;
+    return connected_;
+}
+
+bool Gamepad::IsFresh(int timeout_ms) const {
+    if (!connected_) return false;
+    auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - last_event_time_).count();
+    return dt <= timeout_ms;
 }
 
 void Gamepad::ReadLoop() {
     struct js_event event;
     while (running) {
-        bool any_read = false;
-        while (read(fd, &event, sizeof(event)) == sizeof(event)) {
-            any_read = true;
+        ssize_t bytes = read(fd, &event, sizeof(event));
+        if (bytes == sizeof(event)) {
             if (event.type & JS_EVENT_AXIS) {
                 if (event.number < JS_AXIS_LIMIT) {
                     std::lock_guard<std::mutex> lock(data_mutex);
                     axes[event.number] = (float)event.value / 32767.0f;
-                    // 移除高频打印，避免刷屏
                 }
             }
-            // 按钮事件也不打印，避免刷屏
-        }
-        if (!any_read && fd >= 0) {
-            // No data available
+            last_event_time_ = std::chrono::steady_clock::now();
+        } else if (bytes < 0) {
+            // 设备断开或错误
+            if (errno == ENODEV || errno == EIO) {
+                std::cerr << "[Gamepad] Device disconnected or I/O error" << std::endl;
+                connected_ = false;
+                // 清零轴值
+                std::lock_guard<std::mutex> lock(data_mutex);
+                std::memset(axes, 0, sizeof(axes));
+                break;
+            }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
@@ -325,11 +384,13 @@ std::vector<float> CommandComponent::GetObs() const {
         return input_source_->GetCommand();
     }
 
-    // 向后兼容：直接使用 Gamepad
-    if (gamepad_ && gamepad_->IsConnected()) {
-        command[0] = -gamepad_->GetAxis(1) * 0.5f;
-        command[1] = -gamepad_->GetAxis(0) * 0.0f;
-        command[2] = -gamepad_->GetAxis(3) * 0.5f;
+    // 向后兼容：直接使用 Gamepad（使用新鲜度检查）
+    if (gamepad_ && gamepad_->IsFresh(500)) {
+        return {
+            -gamepad_->GetAxis(1) * 0.5f,
+            -gamepad_->GetAxis(0) * 0.0f,
+            -gamepad_->GetAxis(3) * 0.5f
+        };
     }
 
     return command;
@@ -374,8 +435,9 @@ void RoboObs::UpdateObs() {
     }
     auto current_obs = frame.GetObs();
     obs_dim = current_obs.size();
-    
-    history.push_back(current_obs);
+
+    last_single_obs_ = std::move(current_obs);
+    history.push_back(last_single_obs_);
 
     while (history.size() > (size_t)history_length) {
         history.pop_front();
@@ -385,20 +447,20 @@ void RoboObs::UpdateObs() {
 std::vector<float> RoboObs::GetWholeObs() const {
     std::vector<float> whole_obs;
     int missing = history_length - history.size();
-    
+
     if (missing > 0 && obs_dim > 0) {
         std::vector<float> padding(missing * obs_dim, 0.0f);
         whole_obs.insert(whole_obs.end(), padding.begin(), padding.end());
     }
-    
+
     for (const auto& obs : history) {
         whole_obs.insert(whole_obs.end(), obs.begin(), obs.end());
     }
     return whole_obs;
 }
 
-std::vector<float> RoboObs::GetSingleObs() const {
-    if (history.empty()) return std::vector<float>(obs_dim, 0.0f);
+const std::vector<float>& RoboObs::GetSingleObs() const {
+    if (history.empty()) return last_single_obs_;  // 始终返回有效缓存
     return history.back();
 }
 

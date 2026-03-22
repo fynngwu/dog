@@ -27,7 +27,9 @@
 #include <thread>
 #include <chrono>
 #include <signal.h>
+#include <cmath>
 #include <exception>
+#include <atomic>
 
 #include "robstride.hpp"
 #include "can_interface.hpp"
@@ -40,57 +42,14 @@
 #include "input/gamepad_command_source.hpp"
 #include "input/keyboard_command_source.hpp"
 
-volatile bool g_running = true;
-volatile bool g_policy_error = false;
-volatile bool g_motor_offline = false;
+// 使用 std::atomic 保证线程安全的信号处理
+std::atomic<bool> g_running{true};
+std::atomic<bool> g_policy_error{false};
+std::atomic<bool> g_motor_offline{false};
 
-void signal_handler(int sig) {
+void signal_handler(int) {
+    // 只置位，不做 I/O（async-signal-safe）
     g_running = false;
-    std::cout << "\n[Signal] Interrupted, exiting..." << std::endl;
-}
-
-// 安全 hold 函数：将所有电机保持在 offset
-void SafeHold(const std::shared_ptr<RobstrideController>& controller,
-              const std::vector<int>& motor_indices) {
-    for (int i = 0; i < cfg::kNumMotors; ++i) {
-        controller->SendMITCommand(motor_indices[i], cfg::kJointOffsets[i]);
-    }
-}
-
-// 检查所有传感器是否就绪
-bool CheckSensorsReady(const std::shared_ptr<IMUComponent>& imu,
-                       const std::shared_ptr<RobstrideController>& controller,
-                       const std::vector<int>& motor_indices,
-                       int motor_fresh_ms = 100,
-                       int imu_fresh_ms = 100) {
-    // 检查 IMU
-    if (!imu->IsReady() || !imu->IsFresh(imu_fresh_ms)) {
-        return false;
-    }
-    // 检查电机
-    if (!controller->AllMotorsOnlineFresh(motor_indices, motor_fresh_ms)) {
-        return false;
-    }
-    return true;
-}
-
-// 创建输入源
-std::shared_ptr<ICommandSource> CreateInputSource(const std::string& input_mode) {
-    if (input_mode == "gamepad") {
-        auto gamepad = std::make_shared<Gamepad>(cfg::kGamepadDevice.c_str());
-        return std::make_shared<GamepadCommandSource>(gamepad);
-    } else if (input_mode == "keyboard") {
-        return std::make_shared<KeyboardCommandSource>(0.5f, 0.0f, 0.5f);
-    } else {  // auto
-        auto gamepad = std::make_shared<Gamepad>(cfg::kGamepadDevice.c_str());
-        if (gamepad->IsConnected()) {
-            std::cout << "[Input] Gamepad detected, using gamepad" << std::endl;
-            return std::make_shared<GamepadCommandSource>(gamepad);
-        } else {
-            std::cout << "[Input] No gamepad, using keyboard" << std::endl;
-            return std::make_shared<KeyboardCommandSource>(0.5f, 0.0f, 0.5f);
-        }
-    }
 }
 
 int main(int argc, char** argv) {
@@ -233,7 +192,7 @@ int main(int argc, char** argv) {
         }
 
         // Hold 在 offset
-        SafeHold(controller, motor_indices);
+        bringup.HoldOffsets(motor_indices);
 
         total_attempts++;
         std::this_thread::sleep_for(std::chrono::milliseconds(1000 / cfg::kControlHz));
@@ -271,7 +230,7 @@ int main(int argc, char** argv) {
                 g_motor_offline = true;
             }
             // 继续运行，但只 hold
-            SafeHold(controller, motor_indices);
+            bringup.HoldOffsets(motor_indices);
             last = loop_start;
             auto next_time = loop_start + std::chrono::milliseconds(1000 / cfg::kControlHz);
             std::this_thread::sleep_until(next_time);
@@ -308,7 +267,18 @@ int main(int argc, char** argv) {
         }
 
         // Hold 在 offset (不发送 policy 输出)
-        SafeHold(controller, motor_indices);
+        bringup.HoldOffsets(motor_indices);
+
+        // 计算诊断信息
+        float max_abs_action = 0.0f;
+        float max_desired_diff = 0.0f;
+        int clamp_count = 0;
+        for (int i = 0; i < cfg::kNumMotors; ++i) {
+            max_abs_action = std::max(max_abs_action, std::fabs(policy_out.raw_action[i]));
+            if (std::fabs(policy_out.clipped_abs[i] - policy_out.desired_abs[i]) > 0.001f) {
+                clamp_count++;
+            }
+        }
 
         // 记录帧数据
         FrameRecord rec;
@@ -324,30 +294,34 @@ int main(int argc, char** argv) {
         rec.desired_abs = policy_out.desired_abs;
         rec.clipped_abs = policy_out.clipped_abs;
 
-        rec.motor_pos_abs.resize(cfg::kNumMotors);
-        rec.motor_vel_abs.resize(cfg::kNumMotors);
-        rec.motor_torque.resize(cfg::kNumMotors);
+        controller->GetAllMotorStates(motor_indices,
+                                      rec.motor_pos_abs,
+                                      rec.motor_vel_abs,
+                                      rec.motor_torque);
+
+        // 计算最大偏差（需要先获取电机位置）
         for (int i = 0; i < cfg::kNumMotors; ++i) {
-            auto s = controller->GetMotorState(motor_indices[i]);
-            rec.motor_pos_abs[i] = s.position;
-            rec.motor_vel_abs[i] = s.velocity;
-            rec.motor_torque[i] = s.torque;
+            float diff = std::fabs(policy_out.desired_abs[i] - rec.motor_pos_abs[i]);
+            max_desired_diff = std::max(max_desired_diff, diff);
         }
+        rec.max_track_err = max_desired_diff;
+        rec.clamp_count = clamp_count;
+        rec.imu_fresh = imu_component->IsFresh(100) ? 1 : 0;
+        rec.motors_fresh = controller->AllMotorsOnlineFresh(motor_indices, 100) ? 1 : 0;
+
         logger.LogFrame(rec);
 
         // 打印状态 (每 10 帧)
         if (tick % 10 == 0) {
-            bool imu_ok = imu_component->IsFresh(100);
-            bool motors_ok = controller->AllMotorsOnlineFresh(motor_indices, 100);
             auto cmd = input_source->GetCommand();
             std::cout << "\r[t=" << std::fixed << std::setprecision(1) << rec.t_sec
                       << "s] infer: " << std::setprecision(1) << infer_ms << "ms"
-                      << " | history: " << rec.history_valid << "/" << cfg::kHistoryLen
-                      << " | action[0]: " << std::setprecision(3) << policy_out.raw_action[0]
-                      << " | infer_ok: " << (infer_success ? "Y" : "N")
-                      << " | cmd: [" << std::setprecision(2) << cmd[0] << "," << cmd[1] << "," << cmd[2] << "]"
-                      << " | imu: " << (imu_ok ? "OK" : "!!")
-                      << " | motors: " << (motors_ok ? "OK" : "!!")
+                      << " | max_act: " << std::setprecision(2) << max_abs_action
+                      << " | max_diff: " << max_desired_diff
+                      << " | clamp: " << clamp_count
+                      << " | hist: " << rec.history_valid << "/" << cfg::kHistoryLen
+                      << " | imu: " << (rec.imu_fresh ? "OK" : "!!")
+                      << " | motors: " << (rec.motors_fresh ? "OK" : "!!")
                       << std::flush;
         }
 

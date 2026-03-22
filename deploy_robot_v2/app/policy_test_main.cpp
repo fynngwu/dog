@@ -31,6 +31,7 @@
 #include <chrono>
 #include <signal.h>
 #include <cstring>
+#include <cmath>
 #include <exception>
 #include <atomic>
 
@@ -72,6 +73,7 @@ void PrintUsage(const char* prog) {
     std::cout << std::endl;
     std::cout << "  options:" << std::endl;
     std::cout << "    --input <source>  - Input source: gamepad, keyboard, auto (default: auto)" << std::endl;
+    std::cout << "    --low-gain        - Use low gain mode for ground testing" << std::endl;
     std::cout << std::endl;
     std::cout << "  keyboard controls:" << std::endl;
     std::cout << "    W/S: forward/backward (vx)" << std::endl;
@@ -80,62 +82,13 @@ void PrintUsage(const char* prog) {
     std::cout << "    Space/R: command zero" << std::endl;
 }
 
-// 安全 hold 函数：将所有电机保持在 offset
-// 返回 true 表示全部发送成功，false 表示有发送失败
-bool SafeHold(const std::shared_ptr<RobstrideController>& controller,
-              const std::vector<int>& motor_indices) {
-    bool all_success = true;
-    for (int i = 0; i < cfg::kNumMotors; ++i) {
-        int ret = controller->SendMITCommand(motor_indices[i], cfg::kJointOffsets[i]);
-        if (ret != 0) {
-            all_success = false;
-        }
-    }
-    return all_success;
-}
-
-// 检查所有传感器是否就绪
-bool CheckSensorsReady(const std::shared_ptr<IMUComponent>& imu,
-                       const std::shared_ptr<RobstrideController>& controller,
-                       const std::vector<int>& motor_indices,
-                       int motor_fresh_ms = 100,
-                       int imu_fresh_ms = 100) {
-    // 检查 IMU
-    if (!imu->IsReady() || !imu->IsFresh(imu_fresh_ms)) {
-        return false;
-    }
-    // 检查电机
-    if (!controller->AllMotorsOnlineFresh(motor_indices, motor_fresh_ms)) {
-        return false;
-    }
-    return true;
-}
-
-// 创建输入源
-std::shared_ptr<ICommandSource> CreateInputSource(const std::string& input_mode) {
-    if (input_mode == "gamepad") {
-        auto gamepad = std::make_shared<Gamepad>(cfg::kGamepadDevice.c_str());
-        return std::make_shared<GamepadCommandSource>(gamepad);
-    } else if (input_mode == "keyboard") {
-        return std::make_shared<KeyboardCommandSource>(0.5f, 0.0f, 0.5f);
-    } else {  // auto
-        auto gamepad = std::make_shared<Gamepad>(cfg::kGamepadDevice.c_str());
-        if (gamepad->IsConnected()) {
-            std::cout << "[Input] Gamepad detected, using gamepad" << std::endl;
-            return std::make_shared<GamepadCommandSource>(gamepad);
-        } else {
-            std::cout << "[Input] No gamepad, using keyboard" << std::endl;
-            return std::make_shared<KeyboardCommandSource>(0.5f, 0.0f, 0.5f);
-        }
-    }
-}
-
 int main(int argc, char** argv) {
     signal(SIGINT, signal_handler);
 
     // 解析参数
     RunMode mode = RunMode::ShadowPolicy;
     std::string input_mode = "auto";
+    bool low_gain = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -155,6 +108,8 @@ int main(int argc, char** argv) {
                 PrintUsage(argv[0]);
                 return 1;
             }
+        } else if (arg == "--low-gain") {
+            low_gain = true;
         } else {
             std::cerr << "Unknown argument: " << arg << std::endl;
             PrintUsage(argv[0]);
@@ -168,6 +123,9 @@ int main(int argc, char** argv) {
         case RunMode::HoldOnly: std::cout << "hold-only (observe and hold at offset, no inference)"; break;
         case RunMode::ShadowPolicy: std::cout << "shadow (inference + logging, NO control)"; break;
         case RunMode::ClosedLoop: std::cout << "run (closed-loop control)"; break;
+    }
+    if (low_gain) {
+        std::cout << " [LOW-GAIN]";
     }
     std::cout << std::endl;
     std::cout << "Input: " << input_mode << std::endl;
@@ -208,7 +166,7 @@ int main(int argc, char** argv) {
     }
 
     logger.LogEvent("Enabling motors");
-    if (!bringup.EnableAll(motor_indices)) {
+    if (!bringup.EnableAll(motor_indices, low_gain)) {
         logger.LogEvent("ERROR: EnableAll failed");
         return 1;
     }
@@ -306,7 +264,7 @@ int main(int argc, char** argv) {
         }
 
         // Hold 在 offset
-        if (!SafeHold(controller, motor_indices)) {
+        if (!bringup.HoldOffsets(motor_indices)) {
             std::cerr << "\n[Prewarm] WARNING: SafeHold send failed" << std::endl;
         }
 
@@ -331,6 +289,14 @@ int main(int argc, char** argv) {
     // ========== Step 4: 主循环 ==========
     logger.LogEvent("Starting main loop");
 
+    // 闭环软切入参数
+    double run_enter_t = -1.0;              // 进入闭环的时间点
+    const double kBlendInTime = 1.0;        // 渐入时间 1 秒
+    const float kMaxStepPerTick = 0.03f;    // 每拍最大变化 0.03 rad
+    const float kMaxTrackErr = 0.6f;        // 最大跟踪误差 0.6 rad
+
+    std::vector<float> last_cmd = cfg::kJointOffsets;  // 上一拍命令，初始化为 offset
+
     uint64_t tick = 0;
     auto t0 = std::chrono::steady_clock::now();
     auto last = t0;
@@ -348,7 +314,7 @@ int main(int argc, char** argv) {
                 mode = RunMode::HoldOnly;
             }
             // 即使在 hold 模式也要继续检查，但只发 hold 命令
-            if (!SafeHold(controller, motor_indices)) {
+            if (!bringup.HoldOffsets(motor_indices)) {
                 g_send_failed = true;
             }
             last = loop_start;
@@ -394,26 +360,81 @@ int main(int argc, char** argv) {
         // 发送控制 (只在 run 模式且推理成功)
         bool control_enabled = false;
         bool send_ok = true;
+        std::vector<float> cmd_sent_abs(cfg::kNumMotors, 0.0f);
+        std::vector<float> cmd_minus_pos(cfg::kNumMotors, 0.0f);
+        std::vector<float> cmd_delta(cfg::kNumMotors, 0.0f);
+        float max_track_err = 0.0f;
+        int clamp_count = 0;
+
         if (mode == RunMode::ClosedLoop && infer_success) {
             control_enabled = true;
-            for (int i = 0; i < cfg::kNumMotors; ++i) {
-                int ret = controller->SendMITCommand(motor_indices[i], policy_out.clipped_abs[i]);
-                if (ret != 0) {
-                    send_ok = false;
-                    std::cerr << "\n[CAN] ERROR: SendMITCommand failed for motor " << i << std::endl;
-                }
+
+            // 计算渐入系数
+            double t_sec = std::chrono::duration<double>(loop_start - t0).count();
+            if (run_enter_t < 0.0) {
+                run_enter_t = t_sec;
+                std::cout << "\n[Control] Entering closed-loop at t=" << t_sec << "s" << std::endl;
+                logger.LogEvent("Entering closed-loop control");
             }
-            if (!send_ok) {
-                g_send_failed = true;
-                logger.LogEvent("ERROR: CAN send failed, entering hold mode");
-                mode = RunMode::HoldOnly;
+            double alpha = std::clamp((t_sec - run_enter_t) / kBlendInTime, 0.0, 1.0);
+
+            for (int i = 0; i < cfg::kNumMotors; ++i) {
+                // 1. 渐入：从 offset 平滑过渡到 policy 输出
+                float target = cfg::kJointOffsets[i] +
+                               alpha * (policy_out.clipped_abs[i] - cfg::kJointOffsets[i]);
+
+                // 2. 每拍命令限幅
+                target = std::clamp(target, last_cmd[i] - kMaxStepPerTick, last_cmd[i] + kMaxStepPerTick);
+
+                // 3. 跟踪误差保护
+                auto st = controller->GetMotorState(motor_indices[i]);
+                float err = std::fabs(target - st.position);
+                if (err > max_track_err) max_track_err = err;
+
+                if (err > kMaxTrackErr) {
+                    std::cerr << "\n[Safety] Tracking error too large for motor " << i
+                              << ": err=" << err << " > " << kMaxTrackErr << std::endl;
+                    logger.LogEvent("SAFETY: tracking error too large, entering hold");
+                    bringup.EmergencyHoldAll(motor_indices, 3);
+                    mode = RunMode::HoldOnly;
+                    control_enabled = false;
+                    send_ok = false;
+                    g_send_failed = true;
+                    break;
+                }
+
+                // 发送命令
+                int ret = controller->SendMITCommand(motor_indices[i], target);
+                if (ret != 0) {
+                    std::cerr << "\n[CAN] ERROR: SendMITCommand failed for motor " << i << std::endl;
+                    g_send_failed = true;
+                    logger.LogEvent("ERROR: CAN send failed, emergency hold");
+                    bringup.EmergencyHoldAll(motor_indices, 3);
+                    mode = RunMode::HoldOnly;
+                    control_enabled = false;
+                    send_ok = false;
+                    break;
+                }
+
+                // 记录诊断数据
+                cmd_sent_abs[i] = target;
+                cmd_minus_pos[i] = target - st.position;
+                cmd_delta[i] = target - last_cmd[i];
+                last_cmd[i] = target;
+
+                // 统计 clamp 次数
+                if (std::fabs(policy_out.clipped_abs[i] - policy_out.desired_abs[i]) > 0.001f) {
+                    clamp_count++;
+                }
             }
         } else {
             // hold-only / shadow 模式 / 推理失败时都 hold 在 offset
-            if (!SafeHold(controller, motor_indices)) {
+            if (!bringup.HoldOffsets(motor_indices)) {
                 g_send_failed = true;
                 std::cerr << "\n[CAN] ERROR: SafeHold send failed" << std::endl;
             }
+            // 非 run 模式重置渐入时间
+            run_enter_t = -1.0;
         }
 
         // 记录帧数据
@@ -430,29 +451,33 @@ int main(int argc, char** argv) {
         rec.desired_abs = policy_out.desired_abs;
         rec.clipped_abs = policy_out.clipped_abs;
 
-        rec.motor_pos_abs.resize(cfg::kNumMotors);
-        rec.motor_vel_abs.resize(cfg::kNumMotors);
-        rec.motor_torque.resize(cfg::kNumMotors);
-        for (int i = 0; i < cfg::kNumMotors; ++i) {
-            auto s = controller->GetMotorState(motor_indices[i]);
-            rec.motor_pos_abs[i] = s.position;
-            rec.motor_vel_abs[i] = s.velocity;
-            rec.motor_torque[i] = s.torque;
-        }
+        // 新增：执行层诊断字段
+        rec.cmd_sent_abs = cmd_sent_abs;
+        rec.cmd_minus_pos = cmd_minus_pos;
+        rec.cmd_delta = cmd_delta;
+        rec.max_track_err = max_track_err;
+        rec.clamp_count = clamp_count;
+        rec.imu_fresh = imu_component->IsFresh(100) ? 1 : 0;
+        rec.motors_fresh = controller->AllMotorsOnlineFresh(motor_indices, 100) ? 1 : 0;
+
+        controller->GetAllMotorStates(motor_indices,
+                                       rec.motor_pos_abs,
+                                       rec.motor_vel_abs,
+                                       rec.motor_torque);
         logger.LogFrame(rec);
 
         // 打印状态 (每 10 帧)
         if (tick % 10 == 0) {
-            bool imu_ok = imu_component->IsFresh(100);
-            bool motors_ok = controller->AllMotorsOnlineFresh(motor_indices, 100);
             auto cmd = input_source->GetCommand();
             std::cout << "\r[t=" << std::fixed << std::setprecision(1) << rec.t_sec
                       << "s] dt: " << std::setprecision(1) << rec.loop_dt_ms << "ms"
                       << " | infer: " << infer_ms << "ms"
                       << " | ctrl: " << (control_enabled ? "ON" : "HOLD")
                       << " | cmd: [" << std::setprecision(2) << cmd[0] << "," << cmd[1] << "," << cmd[2] << "]"
-                      << " | imu: " << (imu_ok ? "OK" : "!!")
-                      << " | motors: " << (motors_ok ? "OK" : "!!")
+                      << " | max_err: " << std::setprecision(3) << max_track_err
+                      << " | clamp: " << clamp_count
+                      << " | imu: " << (rec.imu_fresh ? "OK" : "!!")
+                      << " | motors: " << (rec.motors_fresh ? "OK" : "!!")
                       << std::flush;
         }
 
@@ -469,7 +494,7 @@ int main(int argc, char** argv) {
     // 安全停止：回到 offset 并保持
     std::cout << std::endl << "[Shutdown] Moving to safe position..." << std::endl;
     for (int i = 0; i < 100; ++i) {
-        if (!SafeHold(controller, motor_indices)) {
+        if (!bringup.HoldOffsets(motor_indices)) {
             std::cerr << "[Shutdown] WARNING: SafeHold send failed at iteration " << i << std::endl;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(20));

@@ -7,6 +7,7 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
+#include <chrono>
 #include <linux/joystick.h>
 #include "robstride.hpp"
 
@@ -25,14 +26,17 @@ public:
     ~Gamepad();
     float GetAxis(int axis) const;
     bool IsConnected() const;
+    bool IsFresh(int timeout_ms = 500) const;
 
 private:
     void ReadLoop();
     int fd;
     std::thread read_thread;
     std::atomic<bool> running;
+    std::atomic<bool> connected_{false};
     mutable std::mutex data_mutex;
     float axes[JS_AXIS_LIMIT]; // From linux/joystick.h
+    std::chrono::steady_clock::time_point last_event_time_;
 };
 
 class RoboObsFrame {
@@ -59,12 +63,15 @@ public:
     void AddComponent(std::shared_ptr<ObsComponent> component);
     void UpdateObs();
     std::vector<float> GetWholeObs() const;
-    std::vector<float> GetSingleObs() const;
-    
+    const std::vector<float>& GetSingleObs() const;
+
     // History 状态查询接口
     size_t ValidFrames() const { return history.size(); }
     bool IsHistoryFull() const { return history.size() == static_cast<size_t>(history_length); }
     void ClearHistory();
+
+private:
+    std::vector<float> last_single_obs_;  // 缓存最新单帧观测
 };
 
 class IMUComponent : public ObsComponent {
@@ -78,6 +85,9 @@ public:
     // 健康状态接口
     bool IsReady() const;      // 是否已收到过有效数据
     bool IsFresh(int timeout_ms = 100) const;  // 最近是否更新过
+
+    // 调试接口：打印 IMU 原始数据和映射后数据
+    void PrintDebug() const;
 
 private:
     const char* dev_path;
@@ -110,10 +120,13 @@ private:
 class JointComponent : public ObsComponent {
 public:
     int joint_count;
-    JointComponent(int joint_count, std::shared_ptr<RobstrideController> controller, std::vector<int>& motor_indices, const std::vector<float>& offsets) : 
+    JointComponent(int joint_count, std::shared_ptr<RobstrideController> controller, const std::vector<int>& motor_indices, const std::vector<float>& offsets) :
         joint_count(joint_count), controller(controller), motor_indices(motor_indices), offsets(offsets) {}
     std::vector<float> GetObs() const override;
     void Update() override {}
+
+    // 调试接口：打印关节映射信息
+    void PrintDebug() const;
 
 private:
     std::shared_ptr<RobstrideController> controller;

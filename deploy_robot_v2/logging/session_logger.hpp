@@ -22,6 +22,15 @@ struct FrameRecord {
     std::vector<float> desired_abs;     // 期望绝对角度 (12维)
     std::vector<float> clipped_abs;     // 裁剪后角度 (12维)
 
+    // 新增：执行层诊断字段
+    std::vector<float> cmd_sent_abs;    // 实际发送的命令 (12维)
+    std::vector<float> cmd_minus_pos;   // 命令与实际位置差 (12维)
+    std::vector<float> cmd_delta;       // 命令相对上一拍变化 (12维)
+    float max_track_err = 0.0f;         // 最大跟踪误差
+    int clamp_count = 0;                // clamp 次数
+    int imu_fresh = 1;                  // IMU 是否新鲜
+    int motors_fresh = 1;               // 电机是否新鲜
+
     std::vector<float> motor_pos_abs;   // 电机位置 (12维)
     std::vector<float> motor_vel_abs;   // 电机速度 (12维)
     std::vector<float> motor_torque;    // 电机力矩 (12维)

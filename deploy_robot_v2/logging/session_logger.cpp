@@ -1,18 +1,23 @@
 #include "session_logger.hpp"
 #include <iostream>
 #include <filesystem>
-#include <sstream>
 #include <chrono>
 #include <iomanip>
+#include <cstdio>
 
 namespace {
+// 高效的浮点向量拼接：预分配字符串，直接追加，避免 ostringstream 分配开销
 std::string Join(const std::vector<float>& v) {
-    std::ostringstream oss;
+    if (v.empty()) return {};
+    std::string result;
+    result.reserve(v.size() * 12);  // 预分配空间避免多次分配
+    char buf[32];
     for (size_t i = 0; i < v.size(); ++i) {
-        if (i) oss << ",";
-        oss << v[i];
+        if (i > 0) result += ',';
+        int len = std::snprintf(buf, sizeof(buf), "%.6g", v[i]);
+        result.append(buf, len);
     }
-    return oss.str();
+    return result;
 }
 
 std::string GetTimestamp() {
@@ -60,7 +65,9 @@ void SessionLogger::LogFrame(const FrameRecord& r) {
 
     if (!header_written_) {
         csv_ << "tick,t_sec,loop_dt_ms,infer_ms,history_valid,history_full,control_enabled,"
-             << "single_obs,raw_action,desired_abs,clipped_abs,motor_pos_abs,motor_vel_abs,motor_torque\n";
+             << "single_obs,raw_action,desired_abs,clipped_abs,"
+             << "cmd_sent_abs,cmd_minus_pos,cmd_delta,max_track_err,clamp_count,imu_fresh,motors_fresh,"
+             << "motor_pos_abs,motor_vel_abs,motor_torque\n";
         header_written_ = true;
     }
 
@@ -75,6 +82,13 @@ void SessionLogger::LogFrame(const FrameRecord& r) {
          << Join(r.raw_action) << "\",\""
          << Join(r.desired_abs) << "\",\""
          << Join(r.clipped_abs) << "\",\""
+         << Join(r.cmd_sent_abs) << "\",\""
+         << Join(r.cmd_minus_pos) << "\",\""
+         << Join(r.cmd_delta) << "\","
+         << r.max_track_err << ","
+         << r.clamp_count << ","
+         << r.imu_fresh << ","
+         << r.motors_fresh << ",\""
          << Join(r.motor_pos_abs) << "\",\""
          << Join(r.motor_vel_abs) << "\",\""
          << Join(r.motor_torque) << "\"\n";
