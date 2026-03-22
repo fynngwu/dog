@@ -1,1 +1,0 @@
-{"mode": "closed_loop", "input": "keyboard", "policy_input_dim": 450, "history_len": 10, "control_hz": 50}
