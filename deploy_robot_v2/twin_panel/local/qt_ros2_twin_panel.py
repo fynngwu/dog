@@ -375,7 +375,7 @@ class TwinPanel(QtWidgets.QWidget):
 def main() -> int:
     import argparse
     parser = argparse.ArgumentParser(description='Digital Twin Panel')
-    parser.add_argument('--ssh', default='robot@192.168.123.10', help='SSH target')
+    parser.add_argument('--ssh', default='ares@10.20.105.185', help='SSH target')
     parser.add_argument('--xml', default='/home/wufy/git_resp/dog/leggedrobot_flat.xml', help='MuJoCo XML path')
     parser.add_argument('--no-ros2', action='store_true', help='Disable ROS2')
     args = parser.parse_args()

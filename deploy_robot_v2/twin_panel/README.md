@@ -61,7 +61,7 @@ uv run python local/qt_ros2_twin_panel.py --xml local/robot_fixed.xml
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--ssh` | `robot@192.168.123.10` | SSH 目标 |
+| `--ssh` | `ares@10.20.105.185` | SSH 目标 |
 | `--xml` | `local/robot_fixed.xml` | MuJoCo 模型路径 |
 | `--no-ros2` | - | 禁用 ROS2（默认自动检测） |
 
