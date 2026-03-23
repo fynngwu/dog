@@ -1,0 +1,15 @@
+[22:43:25] Creating controller
+[22:43:25] Binding CAN interfaces
+[22:43:25] Binding motors
+[22:43:25] Enabling motors
+[22:43:25] Enabling auto report
+[22:43:25] Waiting for feedback
+[22:43:25] Moving to offset pose
+[22:43:27] Creating observation components
+[22:43:30] Input source: keyboard
+[22:43:30] Loading policy engine
+[22:43:30] Prewarming history with valid frames
+[22:43:31] History prewarm complete with valid frames
+[22:43:31] Starting main loop
+[22:43:31] Entering closed-loop control
+[22:44:45] SAFETY: Sensor not ready/fresh, entering hold mode
