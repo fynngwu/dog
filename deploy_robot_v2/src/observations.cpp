@@ -1,5 +1,6 @@
 #include "observations.hpp"
 #include "input/input_source.hpp"
+#include "robot_config.hpp"
 #include <iostream>
 #include <cstring>
 #include <unistd.h>
@@ -241,22 +242,18 @@ std::vector<float> JointComponent::GetObs() const {
     for (int motor_idx : motor_indices) {
         auto state = controller->GetMotorState(motor_idx);
 
-        // obs[idx] = state.position;
-
-
-        // For knee joints (indices 8-11) the motor has a gear reduction.
-        // Convert motor shaft angle to joint angle by dividing by the gear ratio.
         float pos = state.position;
         float vel = state.velocity;
-         // Subtract joint offsets to get observations in relative coordinates
-        if (idx >= 8 && idx <= 11) {
-            obs[idx] = (pos - offsets[idx]) / 1.667f;
-            obs[joint_count + idx] = vel / 1.667f;
 
+        // 应用方向映射和减速比处理
+        // 上层坐标 = sign * (电机相对坐标)
+        if (idx >= 8 && idx <= 11) {
+            obs[idx] = cfg::kJointDirection[idx] * ((pos - offsets[idx]) / cfg::kKneeRatio);
+            obs[joint_count + idx] = cfg::kJointDirection[idx] * (vel / cfg::kKneeRatio);
         }
-        else{
-            obs[idx] = pos - offsets[idx];
-            obs[joint_count + idx] = vel;
+        else {
+            obs[idx] = cfg::kJointDirection[idx] * (pos - offsets[idx]);
+            obs[joint_count + idx] = cfg::kJointDirection[idx] * vel;
         }
         idx++;
     }
@@ -267,21 +264,24 @@ void JointComponent::PrintDebug() const {
     std::cout << "[Joint Debug] joint_count=" << joint_count << std::endl;
     for (size_t i = 0; i < motor_indices.size() && i < 12; ++i) {
         auto state = controller->GetMotorState(motor_indices[i]);
-        float pos_obs = state.position - offsets[i];
-        float vel_obs = state.velocity;
-        
-        // 膝关节特殊处理
+        float pos_obs, vel_obs;
+
+        // 应用方向映射和减速比处理
         if (i >= 8 && i <= 11) {
-            pos_obs /= 1.667f;
-            vel_obs /= 1.667f;
-            std::cout << "  [" << i << "] KNEE motor_pos=" << state.position 
+            pos_obs = cfg::kJointDirection[i] * ((state.position - offsets[i]) / cfg::kKneeRatio);
+            vel_obs = cfg::kJointDirection[i] * (state.velocity / cfg::kKneeRatio);
+            std::cout << "  [" << i << "] KNEE motor_pos=" << state.position
                       << " offset=" << offsets[i]
-                      << " obs_pos=" << pos_obs 
-                      << " (ratio=1.667)" << std::endl;
+                      << " obs_pos=" << pos_obs
+                      << " (ratio=" << cfg::kKneeRatio << ")"
+                      << " sign=" << cfg::kJointDirection[i] << std::endl;
         } else {
-            std::cout << "  [" << i << "] motor_pos=" << state.position 
+            pos_obs = cfg::kJointDirection[i] * (state.position - offsets[i]);
+            vel_obs = cfg::kJointDirection[i] * state.velocity;
+            std::cout << "  [" << i << "] motor_pos=" << state.position
                       << " offset=" << offsets[i]
-                      << " obs_pos=" << pos_obs << std::endl;
+                      << " obs_pos=" << pos_obs
+                      << " sign=" << cfg::kJointDirection[i] << std::endl;
         }
     }
 }

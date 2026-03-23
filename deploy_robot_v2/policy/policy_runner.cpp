@@ -27,8 +27,9 @@ PolicyOutput PolicyRunner::Run(const std::vector<float>& obs_450) const {
             act *= cfg::kKneeRatio;
         }
 
-        // 计算期望绝对角度: action * scale + offset
-        float desired = act * cfg::kActionScale + cfg::kJointOffsets[i];
+        // 计算期望绝对角度: sign * action * scale + offset
+        float sign = cfg::kJointDirection[i];
+        float desired = sign * act * cfg::kActionScale + cfg::kJointOffsets[i];
         
         // 计算限位范围
         float lower = cfg::kJointOffsets[i] + cfg::kXmlMin[i];

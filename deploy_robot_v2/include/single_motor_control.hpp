@@ -84,8 +84,9 @@ public:
         int pos = find_motor_pos(physical_id);
         if (pos < 0) return false;
 
-        // Treat angle_rad as the desired offset from zero; add joint_offsets to get absolute target
-        float desired = angle_rad + joint_offsets[pos];
+        // 应用方向映射: sign * angle + offset
+        float sign = joint_direction[pos];
+        float desired = sign * angle_rad + joint_offsets[pos];
 
         // compute soft limits based on joint_offsets and xml ranges
         float lower = joint_offsets[pos] + xml_min[pos];
@@ -124,6 +125,7 @@ private:
     static constexpr float HIPF_OFFSET = 0.13f;
     static constexpr float KNEE_OFFSET = 1.06f * 1.667f;
     static const std::vector<float> joint_offsets;
+    static const std::vector<float> joint_direction;  // 方向映射: 前8个-1, 后4个Knee +1
     static const std::vector<char> can_ids;
     static const std::vector<int> motor_ids;
     static constexpr float MIT_KP = 5.0f;
@@ -139,6 +141,11 @@ const std::vector<float> SingleMotorControl::joint_offsets = {
     HIPA_OFFSET, -HIPA_OFFSET, -HIPA_OFFSET, HIPA_OFFSET,
     HIPF_OFFSET, HIPF_OFFSET, -HIPF_OFFSET, -HIPF_OFFSET,
     KNEE_OFFSET, KNEE_OFFSET, -KNEE_OFFSET, -KNEE_OFFSET,
+};
+const std::vector<float> SingleMotorControl::joint_direction = {
+    -1.0f, -1.0f, -1.0f, -1.0f,   // HipA
+    -1.0f, -1.0f, -1.0f, -1.0f,   // HipF
+    +1.0f, +1.0f, +1.0f, +1.0f,   // Knee
 };
 const std::vector<char> SingleMotorControl::can_ids = {'0','1','2','3'};
 const std::vector<int> SingleMotorControl::motor_ids = {
