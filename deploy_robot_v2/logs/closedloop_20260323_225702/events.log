@@ -1,0 +1,16 @@
+[22:57:02] Creating controller
+[22:57:02] Binding CAN interfaces
+[22:57:02] Binding motors
+[22:57:02] Enabling motors
+[22:57:02] Enabling auto report
+[22:57:03] Waiting for feedback
+[22:57:03] Moving to offset pose
+[22:57:05] Creating observation components
+[22:57:07] Input source: keyboard
+[22:57:07] Loading policy engine
+[22:57:08] Prewarming history with valid frames
+[22:57:08] History prewarm complete with valid frames
+[22:57:08] Starting main loop
+[22:57:08] Entering closed-loop control
+[22:57:08] SAFETY: tracking error too large, entering hold
+[22:57:42] Main loop ended
