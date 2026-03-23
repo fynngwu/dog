@@ -36,6 +36,7 @@ struct Semantics {
     JointArray offsets = VecToArray(cfg::kJointOffsets);
     JointArray xml_min = VecToArray(cfg::kXmlMin);
     JointArray xml_max = VecToArray(cfg::kXmlMax);
+    JointArray joint_direction = VecToArray(cfg::kJointDirection);  // HipA/HipF=-1, Knee=+1
 };
 
 struct ResultPayload {

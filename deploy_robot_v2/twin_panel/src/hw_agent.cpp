@@ -85,7 +85,8 @@ JointArray HwAgent::MotorAbsFromJointRel(const JointArray& joint_rel) const {
     for (size_t i = 0; i < target.size(); ++i) {
         float motor_delta = joint_rel[i];
         if (i >= 8) motor_delta *= semantics_.knee_ratio;
-        const float desired = semantics_.offsets[i] + motor_delta;
+        // 应用关节方向符号：sign * action * scale + offset
+        const float desired = semantics_.joint_direction[i] * motor_delta + semantics_.offsets[i];
         const float lower = semantics_.offsets[i] + semantics_.xml_min[i];
         const float upper = semantics_.offsets[i] + semantics_.xml_max[i];
         target[i] = std::clamp(desired, lower, upper);
@@ -96,8 +97,10 @@ JointArray HwAgent::MotorAbsFromJointRel(const JointArray& joint_rel) const {
 std::vector<float> HwAgent::JointRelFromMotorAbs(const std::vector<float>& motor_abs) const {
     std::vector<float> rel(motor_abs.size(), 0.0f);
     for (size_t i = 0; i < motor_abs.size(); ++i) {
+        // 反向处理符号：(motor_abs - offset) / sign
         const float delta = motor_abs[i] - semantics_.offsets[i];
-        rel[i] = (i >= 8) ? (delta / semantics_.knee_ratio) : delta;
+        float joint_rel = delta * semantics_.joint_direction[i];  // 除以 sign 等于乘以 sign（因为 sign=±1）
+        rel[i] = (i >= 8) ? (joint_rel / semantics_.knee_ratio) : joint_rel;
     }
     return rel;
 }
