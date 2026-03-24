@@ -73,3 +73,6 @@ stubs/
 
 # MuJoCo source
 mujoco-3.6.0/
+
+# Hardlinked code folders
+v3_code/

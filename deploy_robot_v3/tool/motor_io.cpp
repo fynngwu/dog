@@ -56,12 +56,12 @@ bool MotorIO::Initialize() {
     return true;
 }
 
-// Note: Stand position means kJointOffsets, the ready-to-stand position.
-bool MotorIO::EnableAndMoveToStand(float duration_sec) {
+// Note: Target position is kJointOffsets, the ready-to-stand position.
+bool MotorIO::EnableAndMoveToOffsets(float duration_sec) {
     constexpr int kRetryCount = 20;
     constexpr int kWaitMs = 50;
 
-    // Enable all motors with feedback check
+    // 1) Enable all motors with feedback check
     for (int idx : motor_indices_) {
         bool enabled = false;
         for (int attempt = 1; attempt <= kRetryCount; ++attempt) {
@@ -95,53 +95,48 @@ bool MotorIO::EnableAndMoveToStand(float duration_sec) {
     }
     std::cout << "[MotorIO] All motors enabled" << std::endl;
 
-    // Enable auto report
+    // 2) Warm up MIT feedback path without moving motors.
+    // Temporarily set kp=0, kd=small for harmless damping-only commands.
+    // This ensures feedback is fresh before we read current positions.
     for (int idx : motor_indices_) {
-        controller_->EnableAutoReport(idx);
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        controller_->EnableAutoReport(idx);
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        MIT_params damping_only;
+        damping_only.kp = 0.0f;
+        damping_only.kd = 0.1f;  // Small damping, harmless
+        damping_only.vel_limit = kMitVelLimit;
+        damping_only.torque_limit = kMitTorqueLimit;
+        controller_->SetMITParams(idx, damping_only);
     }
-    std::cout << "[MotorIO] Auto report enabled" << std::endl;
 
-    // Wait for feedback from all motors
-    auto t0 = std::chrono::steady_clock::now();
-    constexpr int kTimeoutMs = 3000;
-    std::vector<bool> received(kNumMotors, false);
-
-    while (true) {
-        int valid_cnt = 0;
-        for (size_t i = 0; i < motor_indices_.size(); ++i) {
-            if (received[i]) {
-                valid_cnt++;
-                continue;
+    constexpr int kWarmupCycles = 20;
+    for (int n = 0; n < kWarmupCycles; ++n) {
+        for (int i = 0; i < kNumMotors; ++i) {
+            // Send harmless command (kp=0, so position target doesn't matter)
+            if (controller_->SendMITCommand(motor_indices_[i], 0.0f) != 0) {
+                std::cerr << "[MotorIO] MIT warmup failed for motor " << i << std::endl;
+                return false;
             }
-            if (controller_->IsMotorOnline(motor_indices_[i])) {
-                received[i] = true;
-                valid_cnt++;
-            }
-        }
-
-        if (valid_cnt == static_cast<int>(motor_indices_.size())) {
-            std::cout << "[MotorIO] All motors feedback online" << std::endl;
-            break;
-        }
-
-        auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - t0).count();
-        if (dt > kTimeoutMs) {
-            std::cerr << "[MotorIO] Feedback timeout" << std::endl;
-            return false;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
-    // Disable auto report for runtime
-    for (int idx : motor_indices_) {
-        controller_->DisableAutoReport(idx);
+    if (!AllMotorsHealthy(200)) {
+        std::cerr << "[MotorIO] Motors not healthy after MIT warmup" << std::endl;
+        return false;
     }
+    std::cout << "[MotorIO] MIT feedback path warmed up (damping-only mode)" << std::endl;
 
-    // Smooth move to offset (standing pose)
+    // 3) Restore normal MIT parameters for position control
+    for (int idx : motor_indices_) {
+        MIT_params params;
+        params.kp = kMitKp;
+        params.kd = kMitKd;
+        params.vel_limit = kMitVelLimit;
+        params.torque_limit = kMitTorqueLimit;
+        controller_->SetMITParams(idx, params);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+    // 4) Read real current positions after feedback is fresh
     auto current_pos = ReadCurrentPositions();
     std::cout << "[MotorIO] Current positions: ";
     for (float p : current_pos) std::cout << p << " ";
@@ -151,8 +146,13 @@ bool MotorIO::EnableAndMoveToStand(float duration_sec) {
     for (float o : kJointOffsets) std::cout << o << " ";
     std::cout << std::endl;
 
-    return SmoothMove(current_pos, std::vector<float>(kJointOffsets, kJointOffsets + kNumMotors),
-                      duration_sec, 100);
+    // 5) Smoothly move from current pose to offsets
+    return SmoothMove(
+        current_pos,
+        std::vector<float>(kJointOffsets, kJointOffsets + kNumMotors),
+        duration_sec,
+        100
+    );
 }
 
 std::vector<float> MotorIO::GetJointObs() const {
@@ -211,8 +211,7 @@ bool MotorIO::SendActions(const std::vector<float>& actions, float action_scale)
 
     auto targets = ComputeTargetPositions(actions, action_scale);
 
-    // Send all commands first, then check status
-    // This avoids partial-commit state where some motors updated but others didn't
+    // Best-effort send to all motors, report failure if any
     bool all_success = true;
     for (int i = 0; i < kNumMotors; ++i) {
         if (controller_->SendMITCommand(motor_indices_[i], targets[i]) != 0) {
@@ -259,7 +258,8 @@ bool MotorIO::SmoothMove(const std::vector<float>& from,
     for (int s = 1; s <= steps; ++s) {
         // Check motor health
         if (!AllMotorsHealthy(200)) {
-            std::cerr << "[MotorIO] Motor offline during smooth move" << std::endl;
+            std::cerr << "[MotorIO] Motor offline during smooth move, holding current pose" << std::endl;
+            HoldCurrentPose();  // Safe-hold on failure
             return false;
         }
 
@@ -271,6 +271,7 @@ bool MotorIO::SmoothMove(const std::vector<float>& from,
             float cmd = (1.0f - smooth_a) * from[i] + smooth_a * to[i];
             if (controller_->SendMITCommand(motor_indices_[i], cmd) != 0) {
                 std::cerr << "[MotorIO] Send failed during smooth move for motor " << i << std::endl;
+                HoldCurrentPose();  // Safe-hold on failure
                 return false;
             }
         }
@@ -284,6 +285,16 @@ bool MotorIO::SmoothMove(const std::vector<float>& from,
 bool MotorIO::HoldOffsets() {
     for (int i = 0; i < kNumMotors; ++i) {
         if (controller_->SendMITCommand(motor_indices_[i], kJointOffsets[i]) != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool MotorIO::HoldCurrentPose() {
+    for (int i = 0; i < kNumMotors; ++i) {
+        auto state = controller_->GetMotorState(motor_indices_[i]);
+        if (controller_->SendMITCommand(motor_indices_[i], state.position) != 0) {
             return false;
         }
     }

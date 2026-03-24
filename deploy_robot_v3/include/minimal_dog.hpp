@@ -165,6 +165,10 @@ private:
 
     // Running state
     std::atomic<bool> running_;
+    std::atomic<bool> motors_enabled_;  // Track if motors were enabled
+
+    // Policy failure tracking
+    int policy_fail_count_ = 0;
 };
 
 }  // namespace minimal

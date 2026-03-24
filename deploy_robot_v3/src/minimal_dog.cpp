@@ -49,7 +49,7 @@ MinimalDog::~MinimalDog() {
 bool MinimalDog::Initialize() {
     std::cout << "[MinimalDog] Initializing..." << std::endl;
 
-    // Initialize IMU
+    // Initialize IMU first
     if (!InitIMU()) {
         std::cerr << "[MinimalDog] IMU initialization failed" << std::endl;
         return false;
@@ -62,13 +62,7 @@ bool MinimalDog::Initialize() {
         return false;
     }
 
-    // Enable motors and move to stand position
-    if (!motor_io_->EnableAndMoveToStand(3.0f)) {
-        std::cerr << "[MinimalDog] Enable and move to stand failed" << std::endl;
-        return false;
-    }
-
-    // Initialize Policy
+    // Initialize Policy before enabling motors
     const std::string kPolicyEnginePath = POLICY_ENGINE_PATH;
     policy_ = std::make_unique<Policy>(kPolicyEnginePath);
     if (!policy_->IsValid()) {
@@ -76,13 +70,21 @@ bool MinimalDog::Initialize() {
         return false;
     }
 
-    // Initialize ROS2 command source (required for operation)
+    // Initialize ROS2 command source before enabling motors
     cmd_source_ = std::make_unique<ROS2CommandSource>();
     if (!cmd_source_->Initialize()) {
         std::cerr << "[MinimalDog] ROS2 command source initialization failed" << std::endl;
         return false;
     }
 
+    // Now enable motors and move to offset position
+    // This is done last so all control components are ready
+    if (!motor_io_->EnableAndMoveToOffsets(3.0f)) {
+        std::cerr << "[MinimalDog] Enable and move to offsets failed" << std::endl;
+        return false;
+    }
+
+    motors_enabled_ = true;
     running_ = true;
     std::cout << "[MinimalDog] Initialization complete" << std::endl;
     return true;
@@ -388,9 +390,9 @@ bool MinimalDog::Prewarm() {
             }
         }
 
-        // Hold at offset during prewarm
-        if (!motor_io_->HoldOffsets()) {
-            std::cerr << "\n[MinimalDog] HoldOffsets failed during prewarm" << std::endl;
+        // Hold current pose during prewarm (don't pull to offsets)
+        if (!motor_io_->HoldCurrentPose()) {
+            std::cerr << "\n[MinimalDog] HoldCurrentPose failed during prewarm" << std::endl;
             return false;
         }
 
@@ -440,9 +442,9 @@ void MinimalDog::Run(float duration_sec) {
 
         // Safety check: sensors must be fresh
         if (!imu_fresh || !motors_healthy) {
-            std::cerr << "\n[MinimalDog] Sensor not fresh, holding..." << std::endl;
-            if (!motor_io_->HoldOffsets()) {
-                std::cerr << "[MinimalDog] HoldOffsets failed, stopping..." << std::endl;
+            std::cerr << "\n[MinimalDog] Sensor not fresh, holding current pose..." << std::endl;
+            if (!motor_io_->HoldCurrentPose()) {
+                std::cerr << "[MinimalDog] HoldCurrentPose failed, stopping..." << std::endl;
                 running_ = false;
                 break;
             }
@@ -469,19 +471,18 @@ void MinimalDog::Run(float duration_sec) {
         auto actions = policy_->Run(obs_450, &policy_status);
 
         // Track consecutive policy failures
-        static int policy_fail_count = 0;
         if (policy_status != PolicyStatus::kOk) {
-            policy_fail_count++;
+            policy_fail_count_++;
             std::cerr << "\n[MinimalDog] Policy inference failed (status="
-                      << static_cast<int>(policy_status) << ", count=" << policy_fail_count << ")"
+                      << static_cast<int>(policy_status) << ", count=" << policy_fail_count_ << ")"
                       << std::endl;
-            if (policy_fail_count >= 5) {
+            if (policy_fail_count_ >= 5) {
                 std::cerr << "[MinimalDog] Too many policy failures, stopping..." << std::endl;
                 running_ = false;
                 break;
             }
         } else {
-            policy_fail_count = 0;  // Reset on success
+            policy_fail_count_ = 0;  // Reset on success
         }
 
         // Send actions
@@ -539,11 +540,11 @@ void MinimalDog::Stop() {
         imu_data_.imu_fd_ = -1;
     }
 
-    // Step 3: Send final hold commands briefly (not 2 seconds)
-    // Just a few cycles to ensure motors receive the final offset command
-    if (motor_io_) {
+    // Step 3: Send final hold commands only if motors were enabled
+    // This avoids sending commands on failed initialization path
+    if (motor_io_ && motors_enabled_) {
         for (int i = 0; i < 5; i++) {
-            motor_io_->HoldOffsets();
+            motor_io_->HoldCurrentPose();
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }
     }

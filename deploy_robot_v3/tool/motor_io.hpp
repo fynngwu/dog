@@ -74,14 +74,14 @@ public:
     bool Initialize();
 
     /**
-     * @brief Enable motors and smoothly move to stand position
+     * @brief Enable motors and smoothly move to offset positions
      *
      * The robot moves to kJointOffsets which is the ready-to-stand position.
      *
      * @param duration_sec Duration of the smooth move (default 3.0s)
      * @return true on success
      */
-    bool EnableAndMoveToStand(float duration_sec = 3.0f);
+    bool EnableAndMoveToOffsets(float duration_sec = 3.0f);
 
     /**
      * @brief Get joint observations (positions and velocities)
@@ -115,6 +115,11 @@ public:
      * @brief Hold all motors at their offset positions
      */
     bool HoldOffsets();
+
+    /**
+     * @brief Hold all motors at their current positions
+     */
+    bool HoldCurrentPose();
 
 private:
     std::shared_ptr<RobstrideController> controller_;
