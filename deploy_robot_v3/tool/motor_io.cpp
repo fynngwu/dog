@@ -5,6 +5,9 @@
 #include <chrono>
 #include <algorithm>
 #include <cmath>
+#include <atomic>
+
+extern std::atomic<bool> g_running;
 
 namespace minimal {
 
@@ -63,6 +66,7 @@ bool MotorIO::EnableAndMoveToOffsets(float duration_sec) {
 
     // 1) Enable all motors with feedback check
     for (int idx : motor_indices_) {
+        if (!g_running) return false;
         bool enabled = false;
         for (int attempt = 1; attempt <= kRetryCount; ++attempt) {
             if (controller_->EnableMotor(idx) != 0) {
@@ -118,7 +122,7 @@ bool MotorIO::EnableAndMoveToOffsets(float duration_sec) {
     }
 
     constexpr int kWarmupCycles = 20;
-    for (int n = 0; n < kWarmupCycles; ++n) {
+    for (int n = 0; n < kWarmupCycles && g_running; ++n) {
         for (int i = 0; i < kNumMotors; ++i) {
             // Send harmless command (kp=0, so position target doesn't matter)
             if (controller_->SendMITCommand(motor_indices_[i], 0.0f) != 0) {
@@ -166,50 +170,16 @@ bool MotorIO::EnableAndMoveToOffsets(float duration_sec) {
 }
 
 std::vector<float> MotorIO::GetJointObs() const {
-    std::vector<float> obs(kNumMotors * 2, 0.0f);  // [12 pos, 12 vel]
+    std::vector<float> positions(kNumMotors, 0.0f);
+    std::vector<float> velocities(kNumMotors, 0.0f);
 
     for (int i = 0; i < kNumMotors; ++i) {
         auto state = controller_->GetMotorState(motor_indices_[i]);
-        float pos = state.position;
-        float vel = state.velocity;
-
-        // Apply direction mapping and gear ratio
-        // Policy coordinate = sign * (motor relative coordinate)
-        if (i >= 8 && i <= 11) {  // Knee joints
-            obs[i] = kJointDirection[i] * ((pos - kJointOffsets[i]) / kKneeRatio);
-            obs[kNumMotors + i] = kJointDirection[i] * (vel / kKneeRatio);
-        } else {  // HipA/HipF joints
-            obs[i] = kJointDirection[i] * (pos - kJointOffsets[i]);
-            obs[kNumMotors + i] = kJointDirection[i] * vel;
-        }
+        positions[i] = state.position;
+        velocities[i] = state.velocity;
     }
 
-    return obs;
-}
-
-std::vector<float> MotorIO::ComputeTargetPositions(
-    const std::vector<float>& actions, float action_scale) const {
-
-    std::vector<float> targets(kNumMotors, 0.0f);
-
-    for (int i = 0; i < kNumMotors; ++i) {
-        float act = actions[i];
-
-        // Apply knee gear ratio
-        if (i >= 8 && i <= 11) {
-            act *= kKneeRatio;
-        }
-
-        // desired_abs = sign * action * scale + offset
-        float desired = kJointDirection[i] * act * action_scale + kJointOffsets[i];
-
-        // Clamp to limits
-        float lower = kJointOffsets[i] + kXmlMin[i];
-        float upper = kJointOffsets[i] + kXmlMax[i];
-        targets[i] = std::clamp(desired, lower, upper);
-    }
-
-    return targets;
+    return MapMotorStateToJointObs(positions, velocities);
 }
 
 bool MotorIO::SendActions(const std::vector<float>& actions, float action_scale) {
@@ -219,7 +189,7 @@ bool MotorIO::SendActions(const std::vector<float>& actions, float action_scale)
         return false;
     }
 
-    auto targets = ComputeTargetPositions(actions, action_scale);
+    auto targets = ComputeMotorTargets(actions, action_scale);
 
     // Best-effort send to all motors, report failure if any
     bool all_success = true;
@@ -274,12 +244,11 @@ bool MotorIO::SmoothMove(const std::vector<float>& from,
 
     std::cout << "[MotorIO] Smooth move: " << steps << " steps at " << hz << " Hz" << std::endl;
 
-    for (int s = 1; s <= steps; ++s) {
+    for (int s = 1; s <= steps && g_running; ++s) {
         // Check motor health
         if (!AllMotorsHealthy(200)) {
-            std::cerr << "[MotorIO] Motor offline during smooth move, holding current pose" << std::endl;
-            CaptureHoldPose();
-            HoldLatchedPose();
+            std::cerr << "[MotorIO] Motor offline during smooth move, holding offsets" << std::endl;
+            HoldOffsets();
             return false;
         }
 
@@ -291,12 +260,16 @@ bool MotorIO::SmoothMove(const std::vector<float>& from,
             float cmd = (1.0f - smooth_a) * from[i] + smooth_a * to[i];
             if (controller_->SendMITCommand(motor_indices_[i], cmd) != 0) {
                 std::cerr << "[MotorIO] Send failed during smooth move for motor " << i << std::endl;
-                CaptureHoldPose();
-                HoldLatchedPose();
+                HoldOffsets();
                 return false;
             }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(period_ms));
+    }
+
+    if (!g_running) {
+        std::cerr << "[MotorIO] Smooth move interrupted by signal" << std::endl;
+        return false;
     }
 
     std::cout << "[MotorIO] Smooth move completed" << std::endl;
