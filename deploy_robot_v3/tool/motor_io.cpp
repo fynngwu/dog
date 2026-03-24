@@ -259,7 +259,8 @@ bool MotorIO::SmoothMove(const std::vector<float>& from,
         // Check motor health
         if (!AllMotorsHealthy(200)) {
             std::cerr << "[MotorIO] Motor offline during smooth move, holding current pose" << std::endl;
-            HoldCurrentPose();  // Safe-hold on failure
+            CaptureHoldPose();
+            HoldLatchedPose();
             return false;
         }
 
@@ -271,7 +272,8 @@ bool MotorIO::SmoothMove(const std::vector<float>& from,
             float cmd = (1.0f - smooth_a) * from[i] + smooth_a * to[i];
             if (controller_->SendMITCommand(motor_indices_[i], cmd) != 0) {
                 std::cerr << "[MotorIO] Send failed during smooth move for motor " << i << std::endl;
-                HoldCurrentPose();  // Safe-hold on failure
+                CaptureHoldPose();
+                HoldLatchedPose();
                 return false;
             }
         }
@@ -291,10 +293,22 @@ bool MotorIO::HoldOffsets() {
     return true;
 }
 
-bool MotorIO::HoldCurrentPose() {
+void MotorIO::CaptureHoldPose() {
+    hold_targets_ = ReadCurrentPositions();
+    hold_captured_ = true;
+    std::cout << "[MotorIO] Captured hold pose: ";
+    for (float p : hold_targets_) std::cout << p << " ";
+    std::cout << std::endl;
+}
+
+bool MotorIO::HoldLatchedPose() {
+    if (!hold_captured_) {
+        std::cerr << "[MotorIO] HoldLatchedPose called without CaptureHoldPose" << std::endl;
+        return false;
+    }
+
     for (int i = 0; i < kNumMotors; ++i) {
-        auto state = controller_->GetMotorState(motor_indices_[i]);
-        if (controller_->SendMITCommand(motor_indices_[i], state.position) != 0) {
+        if (controller_->SendMITCommand(motor_indices_[i], hold_targets_[i]) != 0) {
             return false;
         }
     }

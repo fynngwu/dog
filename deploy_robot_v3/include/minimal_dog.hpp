@@ -33,6 +33,7 @@ public:
     static constexpr int kHistoryLen = 10;   // Number of history frames
     static constexpr int kPolicyInputDim = 450;  // kObsDim * kHistoryLen
     static constexpr int kControlHz = 50;    // Control loop frequency
+    static constexpr float kActionRateLimit = 0.05f;  // Max delta per tick for action smoothing
 
     MinimalDog();
     ~MinimalDog();

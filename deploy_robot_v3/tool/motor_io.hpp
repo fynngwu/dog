@@ -117,13 +117,27 @@ public:
     bool HoldOffsets();
 
     /**
-     * @brief Hold all motors at their current positions
+     * @brief Capture current positions as hold targets (call once)
+     *
+     * Reads current motor positions and stores them internally.
+     * Subsequent calls to HoldLatchedPose() will send these cached targets.
+     * This prevents chasing noisy measurements in hold mode.
      */
-    bool HoldCurrentPose();
+    void CaptureHoldPose();
+
+    /**
+     * @brief Hold all motors at the latched positions (call repeatedly)
+     *
+     * Sends the positions captured by CaptureHoldPose().
+     * Returns false if no pose has been captured.
+     */
+    bool HoldLatchedPose();
 
 private:
     std::shared_ptr<RobstrideController> controller_;
     std::vector<int> motor_indices_;  // Mapping from logical index to controller index
+    std::vector<float> hold_targets_;  // Cached hold positions
+    bool hold_captured_ = false;       // Whether hold_targets_ is valid
 
     /**
      * @brief Compute target positions from policy actions

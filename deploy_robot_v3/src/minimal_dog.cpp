@@ -171,13 +171,15 @@ bool MinimalDog::InitIMU() {
 }
 
 void MinimalDog::IMUUpdateLoop() {
-    // NOTE: imu_data_.imu_fd_ is only closed in Stop() AFTER this thread is joined.
-    // This ensures no race condition between reading fd here and closing it in Stop().
-    while (imu_running_) {
+    // Stop() will close the fd to unblock this thread
+    while (imu_running_ && imu_data_.imu_fd_ >= 0) {
         unsigned char cBuff[1];
-        while (serial_read_data(imu_data_.imu_fd_, cBuff, 1)) {
-            WitSerialDataIn(cBuff[0]);
+        int n = serial_read_data(imu_data_.imu_fd_, cBuff, 1);
+        if (n <= 0) {
+            // Read failed or fd closed, exit
+            break;
         }
+        WitSerialDataIn(cBuff[0]);
         std::this_thread::sleep_for(std::chrono::milliseconds(5));  // 200Hz
     }
 }
@@ -390,9 +392,9 @@ bool MinimalDog::Prewarm() {
             }
         }
 
-        // Hold current pose during prewarm (don't pull to offsets)
-        if (!motor_io_->HoldCurrentPose()) {
-            std::cerr << "\n[MinimalDog] HoldCurrentPose failed during prewarm" << std::endl;
+        // Hold at offset positions during prewarm for stability
+        if (!motor_io_->HoldOffsets()) {
+            std::cerr << "\n[MinimalDog] HoldOffsets failed during prewarm" << std::endl;
             return false;
         }
 
@@ -443,8 +445,9 @@ void MinimalDog::Run(float duration_sec) {
         // Safety check: sensors must be fresh
         if (!imu_fresh || !motors_healthy) {
             std::cerr << "\n[MinimalDog] Sensor not fresh, holding current pose..." << std::endl;
-            if (!motor_io_->HoldCurrentPose()) {
-                std::cerr << "[MinimalDog] HoldCurrentPose failed, stopping..." << std::endl;
+            motor_io_->CaptureHoldPose();
+            if (!motor_io_->HoldLatchedPose()) {
+                std::cerr << "[MinimalDog] HoldLatchedPose failed, stopping..." << std::endl;
                 running_ = false;
                 break;
             }
@@ -470,19 +473,35 @@ void MinimalDog::Run(float duration_sec) {
         PolicyStatus policy_status;
         auto actions = policy_->Run(obs_450, &policy_status);
 
-        // Track consecutive policy failures
+        // Handle policy failure: hold current pose instead of sending zero actions
         if (policy_status != PolicyStatus::kOk) {
             policy_fail_count_++;
             std::cerr << "\n[MinimalDog] Policy inference failed (status="
                       << static_cast<int>(policy_status) << ", count=" << policy_fail_count_ << ")"
                       << std::endl;
+
+            // Hold current pose on policy failure
+            motor_io_->CaptureHoldPose();
+            if (!motor_io_->HoldLatchedPose()) {
+                std::cerr << "[MinimalDog] HoldLatchedPose failed" << std::endl;
+            }
+
             if (policy_fail_count_ >= 5) {
                 std::cerr << "[MinimalDog] Too many policy failures, stopping..." << std::endl;
                 running_ = false;
                 break;
             }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000 / kControlHz));
+            continue;
         } else {
             policy_fail_count_ = 0;  // Reset on success
+        }
+
+        // Apply rate limit to actions for smoother motion
+        for (int i = 0; i < 12; ++i) {
+            float da = actions[i] - prev_actions_[i];
+            da = std::clamp(da, -kActionRateLimit, kActionRateLimit);
+            actions[i] = prev_actions_[i] + da;
         }
 
         // Send actions
@@ -529,22 +548,23 @@ void MinimalDog::Stop() {
     }
 
     // Step 2: Stop IMU thread
+    // Close fd FIRST to unblock any blocking read in the thread
     imu_running_ = false;
+    int fd_to_close = imu_data_.imu_fd_;
+    imu_data_.imu_fd_ = -1;  // Signal thread to stop using fd
+    if (fd_to_close >= 0) {
+        serial_close(fd_to_close);  // This will unblock any blocking read
+    }
     if (imu_thread_.joinable()) {
         imu_thread_.join();
-    }
-
-    // Close IMU file descriptor (safe: only after thread is joined)
-    if (imu_data_.imu_fd_ >= 0) {
-        serial_close(imu_data_.imu_fd_);
-        imu_data_.imu_fd_ = -1;
     }
 
     // Step 3: Send final hold commands only if motors were enabled
     // This avoids sending commands on failed initialization path
     if (motor_io_ && motors_enabled_) {
+        motor_io_->CaptureHoldPose();
         for (int i = 0; i < 5; i++) {
-            motor_io_->HoldCurrentPose();
+            motor_io_->HoldLatchedPose();
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }
     }

@@ -83,17 +83,20 @@ std::array<float, 3> ROS2CommandSource::GetCommand() const {
 void ROS2CommandSource::Stop() {
     running_ = false;
 #ifdef ROS2_FOUND
+    // Cancel executor and shutdown ROS2 first, then join thread
+    // This ensures the spin thread can exit even if blocked
+    if (executor_) {
+        executor_->cancel();
+    }
+    if (did_init_) {
+        rclcpp::shutdown();
+        did_init_ = false;
+    }
     if (spin_thread_.joinable()) {
         spin_thread_.join();
     }
     executor_.reset();
     node_.reset();
-
-    // Shutdown ROS2 if we initialized it
-    if (did_init_) {
-        rclcpp::shutdown();
-        did_init_ = false;
-    }
 #endif
 }
 
