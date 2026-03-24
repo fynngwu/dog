@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <termios.h>
 #include <algorithm>
+#include <cerrno>
 
 // External signal flag from main.cpp
 extern std::atomic<bool> g_running;
@@ -172,16 +173,23 @@ bool MinimalDog::InitIMU() {
 
 void MinimalDog::IMUUpdateLoop() {
     // Stop() will close the fd to unblock this thread
+    std::cout << "[MinimalDog] IMU update thread started, fd=" << imu_data_.imu_fd_ << std::endl;
+    int read_count = 0;
+
     while (imu_running_ && imu_data_.imu_fd_ >= 0) {
         unsigned char cBuff[1];
-        int n = serial_read_data(imu_data_.imu_fd_, cBuff, 1);
-        if (n <= 0) {
-            // Read failed or fd closed, exit
-            break;
+
+        // CRITICAL: Use while loop to drain all available data, same as v2
+        // If we only read 1 byte and sleep, the buffer will fill up and stop receiving
+        while (serial_read_data(imu_data_.imu_fd_, cBuff, 1) > 0) {
+            WitSerialDataIn(cBuff[0]);
+            read_count++;
         }
-        WitSerialDataIn(cBuff[0]);
+
         std::this_thread::sleep_for(std::chrono::milliseconds(5));  // 200Hz
     }
+    std::cout << "[MinimalDog] IMU update thread exiting, imu_running=" << imu_running_
+              << ", fd=" << imu_data_.imu_fd_ << std::endl;
 }
 
 // Static callback for IMU data (called from wit_c_sdk)
@@ -444,16 +452,22 @@ void MinimalDog::Run(float duration_sec) {
 
         // Safety check: sensors must be fresh
         if (!imu_fresh || !motors_healthy) {
-            std::cerr << "\n[MinimalDog] Sensor not fresh, holding current pose..." << std::endl;
-            motor_io_->CaptureHoldPose();
-            if (!motor_io_->HoldLatchedPose()) {
-                std::cerr << "[MinimalDog] HoldLatchedPose failed, stopping..." << std::endl;
-                running_ = false;
-                break;
+            // Only print every 50 ticks (1 second) to avoid spamming
+            if (tick % 50 == 0) {
+                auto now = std::chrono::steady_clock::now();
+                std::lock_guard<std::mutex> lock(imu_mutex_);
+                auto imu_age = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - imu_data_.last_update).count();
+                std::cerr << "\n[MinimalDog] Sensor not fresh:"
+                          << " imu=" << (imu_fresh ? "OK" : "STALE")
+                          << " (age=" << imu_age << "ms)"
+                          << ", motors=" << (motors_healthy ? "OK" : "STALE")
+                          << std::endl;
             }
-            // Clear prev_actions_ to match the actual hold state
-            std::fill(prev_actions_.begin(), prev_actions_.end(), 0.0f);
-            std::this_thread::sleep_for(std::chrono::milliseconds(1000 / kControlHz));
+
+            motor_io_->HoldOffsets();
+            auto next_time = loop_start + std::chrono::milliseconds(1000 / kControlHz);
+            std::this_thread::sleep_until(next_time);
             continue;
         }
 
@@ -523,6 +537,7 @@ void MinimalDog::Run(float duration_sec) {
             std::cout << "\r[t=" << std::fixed << std::setprecision(1) << t_sec
                       << "s] cmd: [" << std::setprecision(2) << cmd[0] << "," << cmd[1] << "," << cmd[2] << "]"
                       << " | gyro: [" << imu_obs[0] << "," << imu_obs[1] << "," << imu_obs[2] << "]"
+                      << " | grav: [" << imu_obs[3] << "," << imu_obs[4] << "," << imu_obs[5] << "]"
                       << " | imu: " << (imu_fresh ? "OK" : "!!")
                       << " | motors: " << (motors_healthy ? "OK" : "!!")
                       << std::flush;

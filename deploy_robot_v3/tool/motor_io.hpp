@@ -133,6 +133,11 @@ public:
      */
     bool HoldLatchedPose();
 
+    /**
+     * @brief Debug: print motor feedback ages
+     */
+    void DebugPrintMotorAges() const;
+
 private:
     std::shared_ptr<RobstrideController> controller_;
     std::vector<int> motor_indices_;  // Mapping from logical index to controller index

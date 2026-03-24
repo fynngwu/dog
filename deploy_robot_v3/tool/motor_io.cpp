@@ -95,6 +95,16 @@ bool MotorIO::EnableAndMoveToOffsets(float duration_sec) {
     }
     std::cout << "[MotorIO] All motors enabled" << std::endl;
 
+    // 1.5) Enable auto report for all motors
+    // This ensures motors send feedback periodically, not just on command
+    // CRITICAL: Without this, motors only respond to commands, causing a deadlock
+    // when the main loop skips sending commands due to stale sensor data.
+    for (int idx : motor_indices_) {
+        controller_->EnableAutoReport(idx);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    std::cout << "[MotorIO] Auto report enabled for all motors" << std::endl;
+
     // 2) Warm up MIT feedback path without moving motors.
     // Temporarily set kp=0, kd=small for harmless damping-only commands.
     // This ensures feedback is fresh before we read current positions.
@@ -225,6 +235,15 @@ bool MotorIO::SendActions(const std::vector<float>& actions, float action_scale)
 
 bool MotorIO::AllMotorsHealthy(int max_age_ms) const {
     return controller_->AllMotorsOnlineFresh(motor_indices_, max_age_ms);
+}
+
+void MotorIO::DebugPrintMotorAges() const {
+    std::cerr << "[MotorIO] Motor feedback ages (ms):";
+    for (int i = 0; i < kNumMotors; ++i) {
+        int64_t age = controller_->GetLastOnlineAgeMs(motor_indices_[i]);
+        std::cerr << " [" << i << "]=" << age;
+    }
+    std::cerr << std::endl;
 }
 
 void MotorIO::GetMotorStates(std::vector<float>& positions,
