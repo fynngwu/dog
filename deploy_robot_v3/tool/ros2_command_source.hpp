@@ -7,8 +7,8 @@
 #include <memory>
 
 #ifdef ROS2_FOUND
-#include <rclcpp/rclcpp/rclcpp.hpp>
-#include <geometry_msgs/geometry_msgs/msg/twist.hpp>
+#include <rclcpp/rclcpp.hpp>
+#include <geometry_msgs/msg/twist.hpp>
 #endif
 
 namespace minimal {

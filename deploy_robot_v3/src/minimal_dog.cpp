@@ -169,7 +169,8 @@ bool MinimalDog::InitIMU() {
 }
 
 void MinimalDog::IMUUpdateLoop() {
-    // Use the fd from auto-scan, don't reopen
+    // NOTE: imu_data_.imu_fd_ is only closed in Stop() AFTER this thread is joined.
+    // This ensures no race condition between reading fd here and closing it in Stop().
     while (imu_running_) {
         unsigned char cBuff[1];
         while (serial_read_data(imu_data_.imu_fd_, cBuff, 1)) {
@@ -463,8 +464,25 @@ void MinimalDog::Run(float duration_sec) {
         // Flatten to 450-dim
         auto obs_450 = FlattenHistory();
 
-        // Run policy
-        auto actions = policy_->Run(obs_450);
+        // Run policy with status check
+        PolicyStatus policy_status;
+        auto actions = policy_->Run(obs_450, &policy_status);
+
+        // Track consecutive policy failures
+        static int policy_fail_count = 0;
+        if (policy_status != PolicyStatus::kOk) {
+            policy_fail_count++;
+            std::cerr << "\n[MinimalDog] Policy inference failed (status="
+                      << static_cast<int>(policy_status) << ", count=" << policy_fail_count << ")"
+                      << std::endl;
+            if (policy_fail_count >= 5) {
+                std::cerr << "[MinimalDog] Too many policy failures, stopping..." << std::endl;
+                running_ = false;
+                break;
+            }
+        } else {
+            policy_fail_count = 0;  // Reset on success
+        }
 
         // Send actions
         if (!motor_io_->SendActions(actions)) {
@@ -501,25 +519,31 @@ void MinimalDog::Run(float duration_sec) {
 }
 
 void MinimalDog::Stop() {
+    // Step 1: Stop main loop and command source first
     running_ = false;
-    imu_running_ = false;
 
+    // Stop ROS2 command source (stops spin thread and subscription)
+    if (cmd_source_) {
+        cmd_source_->Stop();
+    }
+
+    // Step 2: Stop IMU thread
+    imu_running_ = false;
     if (imu_thread_.joinable()) {
         imu_thread_.join();
     }
 
-    // Close IMU file descriptor
+    // Close IMU file descriptor (safe: only after thread is joined)
     if (imu_data_.imu_fd_ >= 0) {
         serial_close(imu_data_.imu_fd_);
         imu_data_.imu_fd_ = -1;
     }
 
+    // Step 3: Send final hold commands briefly (not 2 seconds)
+    // Just a few cycles to ensure motors receive the final offset command
     if (motor_io_) {
-        // Hold at offset for safety
-        for (int i = 0; i < 100; i++) {
-            if (!motor_io_->HoldOffsets()) {
-                std::cerr << "[MinimalDog] HoldOffsets failed during shutdown" << std::endl;
-            }
+        for (int i = 0; i < 5; i++) {
+            motor_io_->HoldOffsets();
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }
     }

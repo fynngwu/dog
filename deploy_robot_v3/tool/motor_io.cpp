@@ -211,14 +211,17 @@ bool MotorIO::SendActions(const std::vector<float>& actions, float action_scale)
 
     auto targets = ComputeTargetPositions(actions, action_scale);
 
+    // Send all commands first, then check status
+    // This avoids partial-commit state where some motors updated but others didn't
+    bool all_success = true;
     for (int i = 0; i < kNumMotors; ++i) {
         if (controller_->SendMITCommand(motor_indices_[i], targets[i]) != 0) {
             std::cerr << "[MotorIO] Send command failed for motor " << i << std::endl;
-            return false;
+            all_success = false;
         }
     }
 
-    return true;
+    return all_success;
 }
 
 bool MotorIO::AllMotorsHealthy(int max_age_ms) const {

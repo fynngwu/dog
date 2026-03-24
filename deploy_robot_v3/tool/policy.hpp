@@ -7,6 +7,16 @@
 namespace minimal {
 
 /**
+ * @brief Policy inference status
+ */
+enum class PolicyStatus {
+    kOk,           // Normal inference
+    kInvalid,      // Policy not loaded/invalid
+    kInputError,   // Input dimension mismatch
+    kInferError    // Inference exception
+};
+
+/**
  * @brief Policy network wrapper using TensorRT
  *
  * Handles model loading and inference for the legged locomotion policy.
@@ -29,9 +39,11 @@ public:
     /**
      * @brief Run policy inference
      * @param obs_450 Input observation vector (must be 450 dimensions)
-     * @return Action vector (12 dimensions), empty on error
+     * @param status Output: inference status (nullptr to ignore)
+     * @return Action vector (12 dimensions), zeros on error
      */
-    std::vector<float> Run(const std::vector<float>& obs_450) const;
+    std::vector<float> Run(const std::vector<float>& obs_450,
+                           PolicyStatus* status = nullptr) const;
 
     /**
      * @brief Check if policy is valid (loaded successfully)
