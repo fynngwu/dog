@@ -68,6 +68,7 @@ public:
     bool AllMotorsHealthy(int max_age_ms = 100) const;
     int CountOnlineMotors(int max_age_ms = 100) const;
     int MaxFeedbackAgeMs() const;
+    void EnableAllAutoReport();
 
     void GetMotorStates(std::vector<float>& positions,
                        std::vector<float>& velocities,

@@ -210,6 +210,9 @@ bool TwinAgent::InitToOffset(float duration_sec, std::string& err) {
         return false;
     }
 
+    // Re-enable continuous auto-report so motors stay online while idle
+    motor_io_.EnableAllAutoReport();
+
     std::fill(last_joint_targets_.begin(), last_joint_targets_.end(), 0.0f);
     enabled_ = true;
     return true;

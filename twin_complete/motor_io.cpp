@@ -277,6 +277,13 @@ bool MotorIO::SmoothMove(const std::vector<float>& from,
     return true;
 }
 
+void MotorIO::EnableAllAutoReport() {
+    for (int idx : motor_indices_) {
+        controller_->EnableAutoReport(idx);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+}
+
 bool MotorIO::HoldOffsets() {
     for (int i = 0; i < kNumMotors; ++i) {
         if (controller_->SendMITCommand(motor_indices_[i], kJointOffsets[i]) != 0) {
