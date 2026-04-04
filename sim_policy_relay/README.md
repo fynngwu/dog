@@ -12,191 +12,78 @@ MuJoCo simulation + ONNX policy relay for the quadruped robot. Runs a trained RL
 
 ## Quick Start
 
-### 1. Install uv
-
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-### 2. Get the code
-
-```bash
-git clone <repo-url> ~/projects/dog
-cd ~/projects/dog/sim_policy_relay
-```
-
-### 3. Set up the environment
-
-```bash
-uv venv --system-site-packages
+# Install deps (uv required)
+uv venv --system-site-packages   # --system-site-packages only needed for ROS2
 uv sync
-```
 
-`--system-site-packages` is needed if you want ROS2 cmd_vel input. It lets the venv see `rclpy` from the ROS2 system install. If you don't need ROS2, you can omit it:
-
-```bash
-uv venv
-uv sync
-```
-
-### 4. Prepare your model files
-
-You need two files in `sim_policy_relay/`:
-
-- **MuJoCo XML** — robot model (default: `leggedrobot_flat.xml`)
-- **ONNX policy** — trained RL policy (default: `policy.onnx`)
-
-The XML references STL mesh files with absolute paths. If you're on a different computer, see [Custom STL Meshes](#custom-stl-meshes) below.
-
-### 5. Run the GUI panel
-
-```bash
+# Run GUI
 uv run python sim_policy_relay.py
 ```
 
-#### Step-by-step GUI workflow
+GUI workflow: **Connect** -> **Init Robot** -> **Start Policy** -> control via keyboard (WASDQE), sliders, gamepad, or ROS2 cmd_vel.
 
-1. Check **Sim Only** if you don't have a robot connected
-2. Click **Connect** — loads the MuJoCo model and ONNX policy
-3. Click **Init Robot** — places the robot in the default pose (2.5s wait)
-4. Click **Start Policy** — begins the simulation loop at 50 Hz policy rate
-5. Control the robot:
-   - **Keyboard**: W/S (forward/back), A/D (left/right), Q/E (yaw), Space (zero)
-   - **Gamepad**: check "Use gamepad if available" (requires `inputs` package)
-   - **ROS2**: check "Use ROS2 cmd_vel" (requires ROS2, see [ROS2 Setup](#ros2-setup))
-   - **Sliders**: drag cmd_x / cmd_y / cmd_yaw manually
-6. The **Joint Monitor** table shows real vs sim joint positions and highlights divergence:
-   - green = small difference
-   - yellow = moderate difference
-   - red = exceeds threshold
-7. Click **Stop Policy** to pause, **E-Stop** for emergency stop
+## Architecture
 
-## Headless Mode
-
-For running without a display:
-
-```bash
-uv run python sim_headless.py --no-viewer
+```
+sim_policy_relay/
+  sim_policy_relay.py   # tkinter GUI
+  relay_engine.py       # core: sim loop, policy inference, safety, TCP relay
+  sim_headless.py       # headless CLI runner
+  twin_client.py        # TCP client to Jetson twin_agent
+  joystick_input.py     # optional gamepad input
+  ros2_interface.py     # optional ROS2 /cmd_vel subscriber
+  leggedrobot_flat.xml  # MuJoCo robot model (uses meshes/ for STL files)
+  meshes/               # robot STL mesh files (git-tracked)
+  bench_sim.py          # performance benchmark tool
+  pyproject.toml        # uv project config
 ```
 
-Options:
+## Sim Loop Timing
 
-| Flag | Default | Description |
+The sim loop targets **200 Hz physics** with **50 Hz policy inference** (decimation=4).
+
+| Component | Avg cost | Notes |
 |---|---|---|
-| `--xml path` | `leggedrobot_flat.xml` | Custom MuJoCo XML |
-| `--onnx path` | `policy.onnx` | Custom ONNX policy |
-| `--cmd-scale` | `0.5` | Velocity scaling factor |
-| `--deadman-ms` | `200` | Deadman timeout in ms |
-| `--no-viewer` | off | Disable MuJoCo 3D window |
+| `mj_step` (physics) | ~52 us | MuJoCo forward + step |
+| ONNX inference | ~22 us | per policy tick (every 4th sim step) |
+| Observation build | ~8 us | concatenate + clip |
+| PD control | ~6 us | torque compute + clip |
+| **Total per sim tick** | **~69 us** | well within 5000 us budget |
 
-Without ROS2 it runs with zero command (robot stands in place).
+With the viewer enabled, sim steps are batched to match wall-clock time — the viewer's vsync provides natural pacing at ~1:1 realtime.
+
+## Benchmarks
+
+Run the benchmark to measure performance on your hardware:
+
+```bash
+uv run python bench_sim.py
+```
+
+Tested on the reference machine:
+- **No viewer**: 200 Hz sim, 100% realtime
+- **With viewer**: 200 Hz sim, 99.9% realtime (wall-clock matched)
 
 ## ROS2 Setup
 
-To use `/cmd_vel` as the command source:
-
-### Install ROS2 Humble
-
-Follow the [official guide](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debs.html).
-
-### Source ROS2 before running
+Requires `--system-site-packages` when creating the venv so `rclpy` is visible.
 
 ```bash
 source /opt/ros/humble/setup.bash
 uv run python sim_policy_relay.py
-# or
-uv run python sim_headless.py
 ```
 
-### Publish commands
-
-```bash
-ros2 topic pub /cmd_vel geometry_msgs/msg/Twist \
-  "{linear: {x: 0.5}, angular: {z: 0.0}}" --rate 20
-```
-
-### Deadman timeout
-
-If no `/cmd_vel` message is received for 200 ms, the command automatically resets to zero. Keep publishing at >= 5 Hz to maintain control.
-
-## Custom STL Meshes
-
-The MuJoCo XML references STL mesh files with absolute paths. You need to update them when moving to a new computer.
-
-### Option A: Relative paths (recommended)
-
-1. Copy your STL files into `sim_policy_relay/meshes/`
-2. Edit `leggedrobot_flat.xml` — change every `<mesh>` from absolute to relative:
-
-```xml
-<!-- Before -->
-<mesh name="base_link" file="/home/wufy/projects/dog/DOGV2.2.4.SLDASM/DOGV2.2.4.SLDASM/meshes/base_link.STL"/>
-
-<!-- After -->
-<mesh name="base_link" file="meshes/base_link.STL"/>
-```
-
-Or batch-update with sed:
-
-```bash
-sed -i 's|file="/home/wufy/projects/dog/DOGV2.2.4.SLDASM/DOGV2.2.4.SLDASM/meshes/|file="meshes/|g' leggedrobot_flat.xml
-```
-
-### Option B: Update to your absolute path
-
-```bash
-sed -i 's|/home/wufy/projects/dog/DOGV2.2.4.SLDASM|/your/path/to/meshes|g' leggedrobot_flat.xml
-```
-
-### Required mesh files
-
-```
-base_link.STL        LF_HipA_link.STL    LF_HipF_link.STL    LF_Knee_link.STL    LF_Foot_link.STL
-LR_HipA_link.STL    LR_HipF_link.STL    LR_Knee_link.STL    LR_Foot_link.STL
-RF_HipA_link.STL    RF_HipF_link.STL    RF_Knee_link.STL    RF_Foot_link.STL
-RR_HipA_link.STL    RR_HipF_link.STL    RR_Knee_link.STL    RR_Foot_link.STL
-```
+Deadman timeout: 200 ms — publish `/cmd_vel` at >= 5 Hz to maintain control.
 
 ## Robot-Connected Mode
 
-To control the real robot through the GUI:
+1. Run `twin_agent` on the Jetson (TCP ports 47001/47002)
+2. Enter Jetson IP, leave Sim Only unchecked
+3. Connect -> Init Robot -> Start Policy
 
-1. Run `twin_agent` on the Jetson (listens on TCP ports 47001/47002)
-2. In the GUI, enter the Jetson IP in the **Jetson IP** field
-3. Leave **Sim Only** unchecked
-4. Click **Connect**, then **Init Robot**, then **Start Policy**
+Safety checks before every action relay: motors_online==12, feedback_age < 200ms, state stream fresh. GUI close sends hold + disable.
 
-The GUI monitors sim-vs-real joint divergence. Enable **Auto-stop on divergence** to automatically halt the policy when any joint exceeds the threshold (default 0.35 rad).
+## Meshes
 
-## Safety Behavior
-
-Before every action relay, the engine checks:
-- `motors_online == 12`
-- `feedback_age_ms < 200`
-- State stream age is fresh
-
-If any check fails, the engine triggers E-stop and sends `disable`.
-
-On GUI close, the app sends `hold` then `disable` to the robot.
-
-## Optional: Gamepad
-
-```bash
-uv add inputs
-```
-
-Left stick = forward/lateral, right stick horizontal = yaw.
-
-## File Structure
-
-```
-sim_policy_relay/
-  sim_policy_relay.py   # GUI application (tkinter)
-  sim_headless.py       # Headless runner (CLI)
-  relay_engine.py       # Core engine: sim, policy, safety, TCP relay
-  joystick_input.py     # Optional gamepad input
-  twin_client.py        # TCP client for Jetson communication
-  leggedrobot_flat.xml  # MuJoCo robot model
-  policy.onnx           # ONNX policy (not tracked in git)
-  pyproject.toml        # uv project config
-```
+STL files live in `meshes/` with relative paths in the XML. No absolute path editing needed.

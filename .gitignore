@@ -76,3 +76,6 @@ mujoco-3.6.0/
 
 # Hardlinked code folders
 v3_code/
+
+# ONNX policy weights (large binary)
+sim_policy_relay/policy.onnx

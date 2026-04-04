@@ -20,23 +20,23 @@
 
   <asset>
     <hfield name="terrain" nrow="100" ncol="100" size="50 50 0.5 0.1"/>
-    <mesh name="base_link" file="/home/wufy/projects/dog/DOGV2.2.4.SLDASM/DOGV2.2.4.SLDASM/meshes/base_link.STL"/>
-    <mesh name="LF_HipA_link" file="/home/wufy/projects/dog/DOGV2.2.4.SLDASM/DOGV2.2.4.SLDASM/meshes/LF_HipA_link.STL"/>
-    <mesh name="LF_HipF_link" file="/home/wufy/projects/dog/DOGV2.2.4.SLDASM/DOGV2.2.4.SLDASM/meshes/LF_HipF_link.STL"/>
-    <mesh name="LF_Knee_link" file="/home/wufy/projects/dog/DOGV2.2.4.SLDASM/DOGV2.2.4.SLDASM/meshes/LF_Knee_link.STL"/>
-    <mesh name="LF_Foot_link" file="/home/wufy/projects/dog/DOGV2.2.4.SLDASM/DOGV2.2.4.SLDASM/meshes/LF_Foot_link.STL"/>
-    <mesh name="LR_HipA_link" file="/home/wufy/projects/dog/DOGV2.2.4.SLDASM/DOGV2.2.4.SLDASM/meshes/LR_HipA_link.STL"/>
-    <mesh name="LR_HipF_link" file="/home/wufy/projects/dog/DOGV2.2.4.SLDASM/DOGV2.2.4.SLDASM/meshes/LR_HipF_link.STL"/>
-    <mesh name="LR_Knee_link" file="/home/wufy/projects/dog/DOGV2.2.4.SLDASM/DOGV2.2.4.SLDASM/meshes/LR_Knee_link.STL"/>
-    <mesh name="LR_Foot_link" file="/home/wufy/projects/dog/DOGV2.2.4.SLDASM/DOGV2.2.4.SLDASM/meshes/LR_Foot_link.STL"/>
-    <mesh name="RF_HipA_link" file="/home/wufy/projects/dog/DOGV2.2.4.SLDASM/DOGV2.2.4.SLDASM/meshes/RF_HipA_link.STL"/>
-    <mesh name="RF_HipF_link" file="/home/wufy/projects/dog/DOGV2.2.4.SLDASM/DOGV2.2.4.SLDASM/meshes/RF_HipF_link.STL"/>
-    <mesh name="RF_Knee_link" file="/home/wufy/projects/dog/DOGV2.2.4.SLDASM/DOGV2.2.4.SLDASM/meshes/RF_Knee_link.STL"/>
-    <mesh name="RF_Foot_link" file="/home/wufy/projects/dog/DOGV2.2.4.SLDASM/DOGV2.2.4.SLDASM/meshes/RF_Foot_link.STL"/>
-    <mesh name="RR_HipA_link" file="/home/wufy/projects/dog/DOGV2.2.4.SLDASM/DOGV2.2.4.SLDASM/meshes/RR_HipA_link.STL"/>
-    <mesh name="RR_HipF_link" file="/home/wufy/projects/dog/DOGV2.2.4.SLDASM/DOGV2.2.4.SLDASM/meshes/RR_HipF_link.STL"/>
-    <mesh name="RR_Knee_link" file="/home/wufy/projects/dog/DOGV2.2.4.SLDASM/DOGV2.2.4.SLDASM/meshes/RR_Knee_link.STL"/>
-    <mesh name="RR_Foot_link" file="/home/wufy/projects/dog/DOGV2.2.4.SLDASM/DOGV2.2.4.SLDASM/meshes/RR_Foot_link.STL"/>
+    <mesh name="base_link" file="meshes/base_link.STL"/>
+    <mesh name="LF_HipA_link" file="meshes/LF_HipA_link.STL"/>
+    <mesh name="LF_HipF_link" file="meshes/LF_HipF_link.STL"/>
+    <mesh name="LF_Knee_link" file="meshes/LF_Knee_link.STL"/>
+    <mesh name="LF_Foot_link" file="meshes/LF_Foot_link.STL"/>
+    <mesh name="LR_HipA_link" file="meshes/LR_HipA_link.STL"/>
+    <mesh name="LR_HipF_link" file="meshes/LR_HipF_link.STL"/>
+    <mesh name="LR_Knee_link" file="meshes/LR_Knee_link.STL"/>
+    <mesh name="LR_Foot_link" file="meshes/LR_Foot_link.STL"/>
+    <mesh name="RF_HipA_link" file="meshes/RF_HipA_link.STL"/>
+    <mesh name="RF_HipF_link" file="meshes/RF_HipF_link.STL"/>
+    <mesh name="RF_Knee_link" file="meshes/RF_Knee_link.STL"/>
+    <mesh name="RF_Foot_link" file="meshes/RF_Foot_link.STL"/>
+    <mesh name="RR_HipA_link" file="meshes/RR_HipA_link.STL"/>
+    <mesh name="RR_HipF_link" file="meshes/RR_HipF_link.STL"/>
+    <mesh name="RR_Knee_link" file="meshes/RR_Knee_link.STL"/>
+    <mesh name="RR_Foot_link" file="meshes/RR_Foot_link.STL"/>
 
     <material name="matplane" reflectance="0.3" texture="texplane" texrepeat="1 1" texuniform="true"/>
     <texture name="texplane" type="2d" builtin="checker" rgb1=".2 .3 .4" rgb2=".1 0.15 0.2" width="512" height="512"/>

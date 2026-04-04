@@ -36,6 +36,7 @@ class EngineConfig:
     xml_path: str = ""
     onnx_path: str = ""
     viewer_enabled: bool = False
+    viewer_sync_every: int = 3
     sim_dt: float = 0.005
     decimation: int = 4
     frame_stack: int = 10
@@ -378,15 +379,21 @@ class SimPolicyRelayEngine:
             self._run_no_viewer(model, data, cfg, policy_ticks, sim_ticks, lowlevel_count, fps_t0)
 
     def _run_with_viewer(self, model, data, cfg, policy_ticks, sim_ticks, lowlevel_count, fps_t0):
+        sim_time = 0.0
+        wall_t0 = time.perf_counter()
         with mujoco.viewer.launch_passive(model, data) as viewer:
             viewer.cam.distance = 3.0
             viewer.cam.azimuth = 90
             viewer.cam.elevation = -45
             viewer.cam.lookat[:] = np.array([0.0, -0.25, 0.824])
             while self._running and viewer.is_running():
-                policy_ticks, sim_ticks, lowlevel_count, fps_t0 = self._run_one_iteration(
-                    model, data, cfg, policy_ticks, sim_ticks, lowlevel_count, fps_t0
-                )
+                # Run enough sim steps to catch up to wall-clock time.
+                wall_elapsed = time.perf_counter() - wall_t0
+                while sim_time < wall_elapsed and self._running:
+                    policy_ticks, sim_ticks, lowlevel_count, fps_t0 = self._run_one_iteration(
+                        model, data, cfg, policy_ticks, sim_ticks, lowlevel_count, fps_t0, pace=False
+                    )
+                    sim_time += cfg.sim_dt
                 viewer.sync()
 
     def _run_no_viewer(self, model, data, cfg, policy_ticks, sim_ticks, lowlevel_count, fps_t0):
@@ -395,45 +402,49 @@ class SimPolicyRelayEngine:
                 model, data, cfg, policy_ticks, sim_ticks, lowlevel_count, fps_t0
             )
 
-    def _run_one_iteration(self, model, data, cfg, policy_ticks, sim_ticks, lowlevel_count, fps_t0):
+    def _run_one_iteration(self, model, data, cfg, policy_ticks, sim_ticks, lowlevel_count, fps_t0, *, pace: bool = True):
         t_start = time.perf_counter()
         if self._request_reset:
             self._apply_reset(data)
 
-        with self._lock:
-            client = self._client
-            policy_running = self._policy_running and not self._estopped
-            cmd = self._cmd.copy()
+        # Read volatile state — booleans are atomic in CPython, cmd uses lock
+        policy_running = self._policy_running and not self._estopped
+        client = self._client
+        cmd = self._cmd.copy()
 
         if client is not None:
             real_state = client.latest_state()
-            with self._lock:
-                self._latest_real_state = real_state
+            self._latest_real_state = real_state
 
         if policy_running:
             self._step_policy_and_sim(data, cmd, lowlevel_count)
             sim_ticks += 1
             if lowlevel_count % cfg.decimation == 0:
                 policy_ticks += 1
-        else:
-            # Keep simulation frozen and lightweight when policy is paused.
+        elif pace:
             time.sleep(cfg.sim_dt)
 
         lowlevel_count += 1
         now = time.perf_counter()
         elapsed = now - fps_t0
         if elapsed >= 1.0:
-            with self._lock:
-                self._sim_fps = sim_ticks / elapsed
-                self._policy_fps = policy_ticks / elapsed
+            self._sim_fps = sim_ticks / elapsed
+            self._policy_fps = policy_ticks / elapsed
             sim_ticks = 0
             policy_ticks = 0
             fps_t0 = now
 
-        spent = time.perf_counter() - t_start
+        if not pace:
+            return policy_ticks, sim_ticks, lowlevel_count, fps_t0
+
+        # Hybrid pacing: sleep + busy-wait for precise timing
+        spent = now - t_start
         remaining = cfg.sim_dt - spent
-        if remaining > 0.0:
-            time.sleep(remaining)
+        if remaining > 0.001:
+            time.sleep(remaining - 0.001)
+        while time.perf_counter() - t_start < cfg.sim_dt:
+            pass
+        return policy_ticks, sim_ticks, lowlevel_count, fps_t0
         return policy_ticks, sim_ticks, lowlevel_count, fps_t0
 
     def _apply_reset(self, data: mujoco.MjData) -> None:
@@ -463,8 +474,7 @@ class SimPolicyRelayEngine:
         dq_policy = dq_sim[SIM_TO_POLICY]
         q_policy_rel = q_policy_abs - self._default_joint_policy
 
-        with self._lock:
-            self._sim_joint_policy = q_policy_rel.copy()
+        self._sim_joint_policy = q_policy_rel.copy()
 
         if lowlevel_count % cfg.decimation == 0:
             mj_quat = np.array(data.qpos[3:7], dtype=np.float64)
@@ -482,9 +492,8 @@ class SimPolicyRelayEngine:
             ]
             current_obs = np.concatenate(obs_parts).astype(np.float32)
             current_obs = np.clip(current_obs, -cfg.clip_observations, cfg.clip_observations)
-            with self._lock:
-                self._hist_obs.append(current_obs)
-                policy_input = np.concatenate(list(self._hist_obs), axis=0)[None, :]
+            self._hist_obs.append(current_obs)
+            policy_input = np.concatenate(list(self._hist_obs), axis=0)[None, :]
 
             raw_action = self._session.run(None, {self._input_name: policy_input})[0][0]
             raw_action = np.asarray(raw_action, dtype=np.float64).reshape(-1)
@@ -494,13 +503,11 @@ class SimPolicyRelayEngine:
             raw_action = np.clip(raw_action, -cfg.clip_actions, cfg.clip_actions)
             scaled_action = raw_action * cfg.action_scale
 
-            with self._lock:
-                self._raw_action_policy = raw_action.copy()
-                self._scaled_action_policy = scaled_action.copy()
+            self._raw_action_policy = raw_action.copy()
+            self._scaled_action_policy = scaled_action.copy()
 
             target_q_sim = scaled_action[POLICY_TO_SIM] + self._default_joint_sim
-            with self._lock:
-                self._target_q_sim = target_q_sim
+            self._target_q_sim = target_q_sim
 
             if not self._safe_to_send(scaled_action):
                 return
