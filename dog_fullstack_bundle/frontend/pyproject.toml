@@ -1,0 +1,10 @@
+[project]
+name = "dog-frontend"
+version = "0.1.0"
+description = "Dog robot Qt frontend"
+requires-python = ">=3.10"
+dependencies = [
+    "PySide6>=6.5.0",
+    "pyqtgraph>=0.13.0",
+    "numpy>=1.24.0",
+]

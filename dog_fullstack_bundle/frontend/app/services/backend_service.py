@@ -26,8 +26,11 @@ class BackendService(QObject):
         self.host = host
         self.cmd_port = int(cmd_port)
         self.state_port = int(state_port)
-        self.manager = ExperimentManager(host=self.host, cmd_port=self.cmd_port, state_port=self.state_port)
-        self.manager.connect()
+        self.manager = ExperimentManager(host=self.host, cmd_port=self.cmd_port, state_port=self.state_port, timeout_s=10.0)
+        if not self.manager.connect():
+            self.log_msg.emit(f"Failed to connect command channel to {host}:{cmd_port}")
+            self.connected_changed.emit(False)
+            return
         self.log_msg.emit(f"Connected command channel to {host}:{cmd_port}")
         self.connected_changed.emit(True)
 
@@ -42,10 +45,11 @@ class BackendService(QObject):
             return result
         return {"ok": False, "error": {"message": f"unexpected backend reply type: {type(result)!r}"}}
 
-    def _execute_async(self, func, success_msg: str, *args, **kwargs) -> None:
+    def _execute_async(self, method_name: str, success_msg: str, *args, **kwargs) -> None:
         if not self.manager:
             self.cmd_error.emit("Backend not connected.")
             return
+        func = getattr(self.manager, method_name)
         worker = CommandWorker(func, *args, **kwargs)
         worker.signals.finished.connect(lambda res: self._handle_reply(self._normalize_reply(res), success_msg))
         worker.signals.error.connect(self._on_error)
@@ -70,16 +74,16 @@ class BackendService(QObject):
         self.cmd_error.emit(err)
 
     def init_robot(self, duration_s: float = 2.5) -> None:
-        self._execute_async(self.manager.init_robot, "Robot initialized", duration_s)
+        self._execute_async("init_robot", "Robot initialized", duration_s)
 
     def enable(self) -> None:
-        self._execute_async(self.manager.enable, "Robot enabled")
+        self._execute_async("enable", "Robot enabled")
 
     def disable(self) -> None:
-        self._execute_async(self.manager.disable, "Robot disabled")
+        self._execute_async("disable", "Robot disabled")
 
     def joint_test(self, indices, target_rad: float) -> None:
-        self._execute_async(self.manager.joint_test, f"joint_test sent to {indices}", indices, target_rad)
+        self._execute_async("joint_test", f"joint_test sent to {indices}", indices, target_rad)
 
     def joint_sine(self, indices, amp: float, freq: float, duration: float) -> None:
-        self._execute_async(self.manager.joint_sine, f"joint_sine sent to {indices}", indices, amp, freq, duration)
+        self._execute_async("joint_sine", f"joint_sine sent to {indices}", indices, amp, freq, duration)

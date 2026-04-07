@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import traceback
+
 from PySide6.QtCore import Slot
 from PySide6.QtWidgets import QLabel, QMainWindow, QTabWidget, QVBoxLayout, QWidget
 
@@ -55,17 +57,20 @@ class MainWindow(QMainWindow):
 
     @Slot(dict)
     def on_state_received(self, data: dict) -> None:
-        self.app_state.update_from_json(data)
-        self.dashboard_page.update_state(self.app_state)
-        self.joint_page.update_state(self.app_state)
-        self.replay_page.update_state(self.app_state)
-        self.diag_page.update_state(self.app_state, data)
-        if self.app_state.fault_active:
-            text = self.app_state.fault_msg or self.app_state.fault_code or "fault"
-            self.alert_bar.setText(f"CRITICAL FAULT: {text}")
-            self.alert_bar.show()
-        else:
-            self.alert_bar.hide()
+        try:
+            self.app_state.update_from_json(data)
+            self.dashboard_page.update_state(self.app_state)
+            self.joint_page.update_state(self.app_state)
+            self.replay_page.update_state(self.app_state)
+            self.diag_page.update_state(self.app_state, data)
+            if self.app_state.fault_active:
+                text = self.app_state.fault_msg or self.app_state.fault_code or "fault"
+                self.alert_bar.setText(f"CRITICAL FAULT: {text}")
+                self.alert_bar.show()
+            else:
+                self.alert_bar.hide()
+        except Exception:
+            traceback.print_exc()
 
     @Slot(bool)
     def on_stream_connection(self, connected: bool) -> None:

@@ -1,4 +1,6 @@
+import faulthandler
 import sys
+import traceback
 from pathlib import Path
 
 # Make the bundled backend/python importable without PYTHONPATH.
@@ -8,6 +10,15 @@ if str(BACKEND_PY) not in sys.path:
 
 from PySide6.QtWidgets import QApplication
 from app.main_window import MainWindow
+
+faulthandler.enable()
+
+
+def _excepthook(exc_type, exc_value, exc_tb):
+    traceback.print_exception(exc_type, exc_value, exc_tb)
+
+
+sys.excepthook = _excepthook
 
 
 def main() -> int:

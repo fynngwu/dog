@@ -38,11 +38,12 @@ class ReplayService(QObject):
             return result
         return {"ok": False, "error": {"message": f"unexpected backend reply type: {type(result)!r}"}}
 
-    def _execute_async(self, func, msg: str, *args, **kwargs) -> None:
+    def _execute_async(self, method_name: str, msg: str, *args, **kwargs) -> None:
         if not self.controller:
             self.log_msg.emit("[ERROR] Replay controller not connected.")
             self.cmd_error.emit("Replay controller not connected.")
             return
+        func = getattr(self.controller, method_name)
         worker = CommandWorker(func, *args, **kwargs)
         worker.signals.finished.connect(lambda res: self._handle_reply(self._normalize_reply(res), msg))
         worker.signals.error.connect(self._on_error)
@@ -67,19 +68,19 @@ class ReplayService(QObject):
         self.cmd_error.emit(err)
 
     def load_csv(self, filename: str, content: str) -> None:
-        self._execute_async(self.controller.stage_and_load_csv, f"Loaded {filename}", filename, content)
+        self._execute_async("stage_and_load_csv", f"Loaded {filename}", filename, content)
 
     def start(self) -> None:
-        self._execute_async(self.controller.start, "Started playback")
+        self._execute_async("start", "Started playback")
 
     def stop(self) -> None:
-        self._execute_async(self.controller.stop, "Stopped playback")
+        self._execute_async("stop", "Stopped playback")
 
     def step(self) -> None:
-        self._execute_async(self.controller.step, "Stepped forward")
+        self._execute_async("step", "Stepped forward")
 
     def prev(self) -> None:
-        self._execute_async(self.controller.prev, "Stepped backward")
+        self._execute_async("prev", "Stepped backward")
 
     def seek(self, frame_idx: int) -> None:
-        self._execute_async(self.controller.seek, f"Seeked to frame {frame_idx}", frame_idx)
+        self._execute_async("seek", f"Seeked to frame {frame_idx}", frame_idx)
