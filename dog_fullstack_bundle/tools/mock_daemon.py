@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import base64
 import csv
 import json
 import math
@@ -8,6 +9,7 @@ import socket
 import threading
 import time
 from dataclasses import dataclass, field
+from io import StringIO
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -210,6 +212,28 @@ class MockDaemon:
                 self.state.replay_cursor = 0
                 self.state.replay_status = 'idle'
                 return ok('replay csv loaded')
+            if op == 'load_replay_csv_text':
+                if len(toks) != 3:
+                    return err('load_replay_csv_text expects: load_replay_csv_text <filename> <base64_csv>')
+                filename = toks[1]
+                try:
+                    decoded = base64.b64decode(toks[2]).decode('utf-8')
+                except Exception as e:
+                    return err(f'base64 decode failed: {e}', 'decode_error')
+                samples = []
+                reader = csv.DictReader(StringIO(decoded))
+                for row in reader:
+                    sample = [float(row[f'scaled_action_{i}']) for i in range(12)]
+                    samples.append(sample)
+                if not samples:
+                    return err('csv contains no samples', 'csv_error')
+                self.state.replay_samples = samples
+                self.state.replay_loaded = True
+                self.state.replay_csv_path = f'text:{filename}'
+                self.state.replay_total = len(samples)
+                self.state.replay_cursor = 0
+                self.state.replay_status = 'idle'
+                return ok('replay csv loaded from text')
             if op == 'replay_start':
                 self.state.replay_status = 'playing'
                 self.state.motion_active = True

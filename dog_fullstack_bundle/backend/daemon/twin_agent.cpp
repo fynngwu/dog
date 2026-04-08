@@ -55,6 +55,26 @@ std::vector<std::string> SplitCsvLine(const std::string& line) {
 
 }  // namespace
 
+std::string TwinAgent::Base64Decode(const std::string& encoded) {
+    static const std::string charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string result;
+    std::vector<int> T(256, -1);
+    for (int i = 0; i < 64; i++) T[static_cast<unsigned char>(charset[i])] = i;
+    T['='] = 0;
+
+    int val = 0, valb = -8;
+    for (unsigned char c : encoded) {
+        if (T[c] == -1) break;
+        val = (val << 6) + T[c];
+        valb += 6;
+        if (valb >= 0) {
+            result.push_back(static_cast<char>((val >> valb) & 0xFF));
+            valb -= 8;
+        }
+    }
+    return result;
+}
+
 TwinAgent::TwinAgent(int cmd_port, int state_port)
     : cmd_port_(cmd_port),
       state_port_(state_port),
@@ -455,9 +475,6 @@ bool TwinAgent::SendReplayFrameAtCursor(size_t cursor, std::string& err, bool up
     }
 
     std::vector<float> targets = replay_samples_[cursor].targets_rel;
-    for (int j = 0; j < minimal::kNumMotors; ++j) {
-        targets[j] = motor_io_.ClampRelativeTargetRad(j, targets[j]);
-    }
     {
         std::lock_guard<std::mutex> lk(control_mutex_);
         if (!enabled_) {
@@ -626,9 +643,6 @@ std::string TwinAgent::ProcessCommand(const std::string& cmd) {
             if (!ParseFloatList(tokens, 1, minimal::kNumMotors, targets, err)) {
                 return ErrorReply(err, "bad_command");
             }
-            for (int i = 0; i < minimal::kNumMotors; ++i) {
-                targets[i] = motor_io_.ClampRelativeTargetRad(i, targets[i]);
-            }
             if (!SetJointTargets(targets, err)) {
                 return ErrorReply(err, "send_failed");
             }
@@ -650,7 +664,7 @@ std::string TwinAgent::ProcessCommand(const std::string& cmd) {
                 targets = last_joint_targets_;
             }
             for (int idx : indices) {
-                targets[idx] = motor_io_.ClampRelativeTargetRad(idx, target);
+                targets[idx] = target;
             }
             if (!SetJointTargets(targets, err)) {
                 return ErrorReply(err, "send_failed");
@@ -686,7 +700,7 @@ std::string TwinAgent::ProcessCommand(const std::string& cmd) {
                         std::vector<float> targets = base_targets;
                         const float value = static_cast<float>(amp * std::sin(2.0 * M_PI * freq * t));
                         for (int idx : indices) {
-                            targets[idx] = motor_io_.ClampRelativeTargetRad(idx, value);
+                            targets[idx] = value;
                         }
                         if (!SetJointTargets(targets, step_err)) {
                             return false;
@@ -717,6 +731,84 @@ std::string TwinAgent::ProcessCommand(const std::string& cmd) {
                 replay_loaded_ = true;
             }
             return OkReply("replay csv loaded");
+        }
+        if (op == "load_replay_csv_text") {
+            // Usage: load_replay_csv_text <filename> <base64_csv>
+            if (tokens.size() != 3) {
+                return ErrorReply("load_replay_csv_text expects: load_replay_csv_text <filename> <base64_csv>", "bad_command");
+            }
+            const std::string& filename = tokens[1];
+            std::string decoded = Base64Decode(tokens[2]);
+            if (decoded.empty() && !tokens[2].empty()) {
+                return ErrorReply("base64 decode failed", "decode_error");
+            }
+
+            // Parse CSV from decoded text
+            std::vector<ReplaySample> samples;
+            std::istringstream iss(decoded);
+            std::string header_line;
+            if (!std::getline(iss, header_line)) {
+                return ErrorReply("csv is empty", "csv_error");
+            }
+            const auto headers = SplitCsvLine(header_line);
+            int time_idx = -1;
+            int sim_time_idx = -1;
+            std::vector<int> action_idx(minimal::kNumMotors, -1);
+            for (size_t i = 0; i < headers.size(); ++i) {
+                const std::string key = Trim(headers[i]);
+                if (key == "timestamp_ms") time_idx = static_cast<int>(i);
+                if (key == "sim_time") sim_time_idx = static_cast<int>(i);
+                for (int j = 0; j < minimal::kNumMotors; ++j) {
+                    if (key == ("scaled_action_" + std::to_string(j))) {
+                        action_idx[j] = static_cast<int>(i);
+                    }
+                }
+            }
+            if (time_idx < 0 && sim_time_idx < 0) {
+                return ErrorReply("csv must contain timestamp_ms or sim_time", "csv_error");
+            }
+            for (int j = 0; j < minimal::kNumMotors; ++j) {
+                if (action_idx[j] < 0) {
+                    return ErrorReply("missing scaled_action_" + std::to_string(j), "csv_error");
+                }
+            }
+
+            std::string line;
+            while (std::getline(iss, line)) {
+                if (Trim(line).empty()) continue;
+                const auto cols = SplitCsvLine(line);
+                ReplaySample sample;
+                try {
+                    if (time_idx >= 0 && time_idx < static_cast<int>(cols.size())) {
+                        sample.time_sec = std::stod(cols[time_idx]) / 1000.0;
+                    } else {
+                        sample.time_sec = std::stod(cols[sim_time_idx]);
+                    }
+                    sample.targets_rel.resize(minimal::kNumMotors, 0.0f);
+                    for (int j = 0; j < minimal::kNumMotors; ++j) {
+                        if (action_idx[j] >= static_cast<int>(cols.size())) {
+                            return ErrorReply("csv row is shorter than header", "csv_error");
+                        }
+                        sample.targets_rel[j] = std::stof(cols[action_idx[j]]);
+                    }
+                } catch (const std::exception& e) {
+                    return ErrorReply(std::string("csv parse failed: ") + e.what(), "csv_error");
+                }
+                samples.push_back(sample);
+            }
+            if (samples.empty()) {
+                return ErrorReply("csv contains no samples", "csv_error");
+            }
+
+            {
+                std::lock_guard<std::mutex> lk(replay_mutex_);
+                replay_samples_ = std::move(samples);
+                replay_csv_path_ = "text:" + filename;
+                replay_cursor_ = 0;
+                replay_speed_factor_ = 1.0f;
+                replay_loaded_ = true;
+            }
+            return OkReply("replay csv loaded from text");
         }
         if (op == "replay_start") {
             float speed_factor = 1.0f;

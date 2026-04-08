@@ -13,8 +13,8 @@ class ExperimentManager:
         self.backend = RobotBackend(host=host, cmd_port=cmd_port, state_port=state_port, timeout_s=timeout_s)
         self.replay = ReplayController(self.backend)
 
-    def connect(self) -> None:
-        self.backend.connect()
+    def connect(self) -> bool:
+        return self.backend.connect()
 
     def disconnect(self) -> None:
         self.backend.disconnect()

@@ -18,6 +18,10 @@ class ReplayController:
         path = self.store.save_text(filename, csv_text)
         return self.backend.load_replay_csv(path)
 
+    def load_csv_from_text(self, filename: str, csv_text: str) -> Dict:
+        """Load CSV directly from text without local file staging (for remote daemons)."""
+        return self.backend.load_replay_csv_text(filename, csv_text)
+
     def start(self) -> Dict:
         return self.backend.replay_start()
 

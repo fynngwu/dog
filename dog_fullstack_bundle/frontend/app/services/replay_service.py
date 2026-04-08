@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QThreadPool, Signal
 
 from app.services.command_worker import CommandWorker
 from robot_backend import RobotBackend
 from replay_controller import ReplayController
+
+if TYPE_CHECKING:
+    from app.services.mujoco_replay_mirror import MujocoReplayMirror
 
 
 class ReplayService(QObject):
@@ -19,6 +22,11 @@ class ReplayService(QObject):
         self.thread_pool = QThreadPool.globalInstance()
         self.backend: Optional[RobotBackend] = None
         self.controller: Optional[ReplayController] = None
+        self.mujoco_mirror: Optional["MujocoReplayMirror"] = None
+
+    def set_mujoco_mirror(self, mirror: Optional["MujocoReplayMirror"]) -> None:
+        """Set MuJoCo replay mirror for dual-target operations."""
+        self.mujoco_mirror = mirror
 
     def connect_backend(self, host: str, cmd_port: int, state_port: int = 47002) -> None:
         self.backend = RobotBackend(host=host, cmd_port=cmd_port, state_port=state_port)
@@ -69,6 +77,20 @@ class ReplayService(QObject):
 
     def load_csv(self, filename: str, content: str) -> None:
         self._execute_async("stage_and_load_csv", f"Loaded {filename}", filename, content)
+
+    def load_csv_text(self, filename: str, csv_text: str) -> None:
+        """Load CSV text directly to robot daemon via base64 encoding."""
+        self._execute_async("load_csv_from_text", f"Loaded {filename} to robot", filename, csv_text)
+
+    def load_csv_to_mujoco(self, filename: str, csv_text: str) -> None:
+        """Load CSV text to MuJoCo mirror."""
+        if self.mujoco_mirror:
+            if self.mujoco_mirror.load_csv(csv_text):
+                self.log_msg.emit(f"[OK] Loaded {filename} to MuJoCo mirror")
+            else:
+                self.log_msg.emit(f"[ERROR] Failed to load {filename} to MuJoCo mirror")
+        else:
+            self.log_msg.emit("[WARN] MuJoCo mirror not available")
 
     def start(self) -> None:
         self._execute_async("start", "Started playback")

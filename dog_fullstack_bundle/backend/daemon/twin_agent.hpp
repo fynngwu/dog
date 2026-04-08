@@ -50,6 +50,7 @@ private:
                             const std::function<void()>& on_success,
                             std::string& err);
     bool LoadReplayCsv(const std::string& csv_path, std::vector<ReplaySample>& samples, std::string& err) const;
+    static std::string Base64Decode(const std::string& encoded);
 
     int cmd_port_;
     int state_port_;

@@ -6,6 +6,7 @@ State channel is a newline-delimited JSON push stream.
 
 from __future__ import annotations
 
+import base64
 import json
 import socket
 import threading
@@ -46,18 +47,27 @@ class RobotClient:
     def latest_state(self) -> Optional[Dict[str, Any]]:
         return self._latest_state
 
-    def connect(self) -> None:
+    def connect(self) -> bool:
         if self.connected:
-            return
+            return True
         self.close()
-        self._cmd_sock = socket.create_connection((self.host, self.cmd_port), timeout=self.timeout_s)
-        self._cmd_sock.settimeout(self.timeout_s)
+        self._cmd_sock = self._connect_socket(self.cmd_port)
+        return self._cmd_sock is not None
 
-    def connect_state_stream(self) -> None:
+    def connect_state_stream(self) -> bool:
         if self.state_connected:
-            return
-        self._state_sock = socket.create_connection((self.host, self.state_port), timeout=self.timeout_s)
-        self._state_sock.settimeout(self.timeout_s)
+            return True
+        self._state_sock = self._connect_socket(self.state_port)
+        return self._state_sock is not None
+
+    def _connect_socket(self, port: int) -> Optional[socket.socket]:
+        try:
+            sock = socket.create_connection((self.host, port), timeout=self.timeout_s)
+            sock.settimeout(self.timeout_s)
+            return sock
+        except OSError as exc:
+            self._last_error = f"connect to {self.host}:{port} failed: {exc}"
+            return None
 
     def close(self) -> None:
         self.stop_state_listener()
@@ -154,7 +164,8 @@ class RobotClient:
         return self.send_command("disable")
 
     def init(self, duration_s: float = 2.5) -> Dict[str, Any]:
-        return self.send_command(f"init {float(duration_s):.3f}")
+        cmd_timeout = max(self.timeout_s, float(duration_s) + 3.5)
+        return self.send_command(f"init {float(duration_s):.3f}", timeout=cmd_timeout)
 
     def set_joint(self, targets_rad: List[float]) -> Dict[str, Any]:
         if len(targets_rad) != 12:
@@ -174,6 +185,12 @@ class RobotClient:
 
     def load_replay_csv(self, csv_path: str) -> Dict[str, Any]:
         return self.send_command(f"load_replay_csv {csv_path}")
+
+    def load_replay_csv_text(self, filename: str, csv_text: str) -> Dict[str, Any]:
+        """Load CSV text directly via base64 encoding (avoids file path issues)."""
+        encoded = base64.b64encode(csv_text.encode("utf-8")).decode("ascii")
+        # Use a simple token-based command - filename first, then base64
+        return self.send_command(f"load_replay_csv_text {filename} {encoded}")
 
     def replay_start(self, speed_factor: float = 1.0) -> Dict[str, Any]:
         return self.send_command(f"replay_start {float(speed_factor):.3f}")

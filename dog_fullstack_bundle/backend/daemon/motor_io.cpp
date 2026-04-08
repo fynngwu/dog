@@ -163,8 +163,7 @@ bool MotorIO::SendSingleMotorRelativeTarget(int motor_index, float rel_target) {
     if (motor_index < 0 || motor_index >= kNumMotors) {
         return false;
     }
-    float clamped = ClampRelativeTargetRad(motor_index, rel_target);
-    float act = clamped;
+    float act = rel_target;
     if (motor_index >= 8) {
         act *= kKneeRatio;
     }
@@ -196,14 +195,6 @@ std::vector<float> MotorIO::ReadCurrentPositions() const {
     return positions;
 }
 
-float MotorIO::ClampRelativeTargetRad(int motor_index, float rel_target) const {
-    if (motor_index < 0 || motor_index >= kNumMotors) {
-        return rel_target;
-    }
-    const float min_rel = (motor_index >= 8) ? (kXmlMin[motor_index] / kKneeRatio) : kXmlMin[motor_index];
-    const float max_rel = (motor_index >= 8) ? (kXmlMax[motor_index] / kKneeRatio) : kXmlMax[motor_index];
-    return std::clamp(rel_target, min_rel, max_rel);
-}
 
 float MotorIO::ClampAbsoluteTargetRad(int motor_index, float abs_target) const {
     if (motor_index < 0 || motor_index >= kNumMotors) {

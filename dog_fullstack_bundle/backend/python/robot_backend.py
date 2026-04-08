@@ -12,8 +12,8 @@ class RobotBackend:
     def __init__(self, host: str, cmd_port: int = 47001, state_port: int = 47002, timeout_s: float = 3.0):
         self.client = RobotClient(host=host, cmd_port=cmd_port, state_port=state_port, timeout_s=timeout_s)
 
-    def connect(self) -> None:
-        self.client.connect()
+    def connect(self) -> bool:
+        return self.client.connect()
 
     def disconnect(self) -> None:
         self.client.close()
@@ -50,6 +50,9 @@ class RobotBackend:
 
     def load_replay_csv(self, csv_path: str | Path) -> Dict[str, Any]:
         return self.client.load_replay_csv(str(csv_path))
+
+    def load_replay_csv_text(self, filename: str, csv_text: str) -> Dict[str, Any]:
+        return self.client.load_replay_csv_text(filename, csv_text)
 
     def replay_start(self) -> Dict[str, Any]:
         return self.client.replay_start(1.0)

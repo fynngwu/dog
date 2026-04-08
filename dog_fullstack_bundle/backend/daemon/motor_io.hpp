@@ -88,7 +88,6 @@ public:
                         std::vector<float>& velocities,
                         std::vector<float>& torques) const;
 
-    float ClampRelativeTargetRad(int motor_index, float rel_target) const;
     float ClampAbsoluteTargetRad(int motor_index, float abs_target) const;
 
     /** Check all motors for stale feedback, return first fault found. */
